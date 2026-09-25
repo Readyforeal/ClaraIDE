@@ -2,6 +2,9 @@ import SwiftUI
 import WebKit
 
 @MainActor final class BrowserSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
+    let id = UUID()
+    private var currentNavigation: WKNavigation?
+    @Published private(set) var hasVisiblePage = false
     let webView: WKWebView
     @Published var address = ""
     @Published var servoURL: URL?
@@ -30,14 +33,43 @@ import WebKit
     }
     func open(_ value: String) throws {
         let url = try Self.validatedURL(value)
-        error = nil; address = url.absoluteString; busy = true; activity = "Opening \(url.host ?? "page")"
-        webView.load(URLRequest(url: url, timeoutInterval: 25))
+        error = nil; address = url.absoluteString; busy = true; hasVisiblePage = false
+        activity = "Opening \(url.host ?? "page")"
+        currentNavigation = webView.load(URLRequest(url: url, timeoutInterval: 25))
     }
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { busy = true; error = nil }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { busy = false; address = webView.url?.absoluteString ?? address; activity = webView.title ?? "Ready" }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { fail(error) }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { fail(error) }
-    private func fail(_ failure: Error) { busy = false; error = failure.localizedDescription; activity = "Navigation failed" }
+    func reload() {
+        do { try open(address) } catch { fail(error) }
+    }
+    func stop() {
+        currentNavigation = nil; webView.stopLoading()
+        fail(AppError.message("Loading stopped. Try again when ready."))
+    }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        currentNavigation = navigation; busy = true; hasVisiblePage = false; error = nil
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard let navigation, navigation === currentNavigation else { return }
+        busy = false; hasVisiblePage = true; error = nil
+        address = webView.url?.absoluteString ?? address; activity = webView.title ?? "Ready"
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        navigationFailed(navigation, error: error)
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        navigationFailed(navigation, error: error)
+    }
+    private func navigationFailed(_ navigation: WKNavigation?, error: Error) {
+        guard let navigation, navigation === currentNavigation else { return }
+        if (error as NSError).domain == NSURLErrorDomain && (error as NSError).code == NSURLErrorCancelled { return }
+        fail(error)
+    }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        currentNavigation = nil
+        fail(AppError.message("The browser process stopped. Try reloading this project’s page."))
+    }
+    private func fail(_ failure: Error) {
+        busy = false; hasVisiblePage = false; error = failure.localizedDescription; activity = "Navigation failed"
+    }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url, ["http", "https", "about"].contains(url.scheme ?? "") else { decisionHandler(.cancel); return }
         decisionHandler(.allow)
@@ -54,12 +86,13 @@ import WebKit
                 if !webView.isLoading && !busy { if let error { throw AppError.message(error) }; return }
                 try await Task.sleep(for: .milliseconds(200))
             }
-            webView.stopLoading(); busy = false
-            throw AppError.message("Page load timed out. Try reading the current page again.")
-        } catch { if Task.isCancelled { webView.stopLoading(); busy = false }; throw error }
+            currentNavigation = nil; webView.stopLoading()
+            let failure = AppError.message("Page load timed out. Try loading it again.")
+            fail(failure); throw failure
+        } catch { if Task.isCancelled { stop() }; throw error }
     }
     func snapshot() async throws -> String {
-        guard webView.url != nil else { throw AppError.message("Open a page first.") }
+        guard hasVisiblePage, !busy, error == nil, webView.url != nil else { throw AppError.message(error ?? "Wait for this project’s page to load first.") }
         let script = #"""
         (() => {
           const visible = e => !!(e.getClientRects().length) && getComputedStyle(e).visibility !== 'hidden';
@@ -71,6 +104,7 @@ import WebKit
         return (try await webView.evaluateJavaScript(script)) as? String ?? "No readable page content."
     }
     func interact(id: Int, text: String?) async throws -> String {
+        guard hasVisiblePage, !busy, error == nil else { throw AppError.message(error ?? "Wait for this project’s page to load first.") }
         guard (0..<100).contains(id) else { throw AppError.message("Invalid element ID. Read the page again.") }
         let originalURL = webView.url
         let label = try await webView.evaluateJavaScript("(() => { const e=window.__claraElements?.[\(id)]; if(!e || !e.isConnected) throw new Error('Stale element; read page again'); return (e.getAttribute('aria-label') || e.innerText || e.getAttribute('placeholder') || e.tagName).slice(0,180); })()") as? String ?? "Element \(id)"

@@ -134,7 +134,7 @@ struct FloatingWorkspace: View {
                 }
                 if let browser = store.browser {
                     ZStack(alignment: .topLeading) {
-                        BrowserPanel(session: browser).frame(width: size.width - 28, height: panelHeight)
+                        BrowserPanel(session: browser).id(browser.id).frame(width: size.width - 28, height: panelHeight)
                             .opacity(store.showBrowser ? 1 : 0).allowsHitTesting(store.showBrowser).accessibilityHidden(!store.showBrowser)
                         if !store.showBrowser {
                             DockIconButton(icon: "globe", help: "Open browser", width: dockButtonSize, height: dockButtonSize) { store.openBrowser() }
