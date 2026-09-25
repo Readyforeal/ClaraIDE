@@ -27,7 +27,15 @@ struct CodeEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true; scroll.borderType = .noBorder; scroll.drawsBackground = false
-        let view = NSTextView(frame: .zero)
+        // A code editor needs plain attributed text, not TextKit 2's paragraph
+        // reconstruction on every edit. Keep layout incremental and visible-range based.
+        let storage = NSTextStorage()
+        let layout = NSLayoutManager()
+        layout.allowsNonContiguousLayout = true
+        let container = NSTextContainer(containerSize: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
+        let view = NSTextView(frame: .zero, textContainer: container)
         view.focusRingType = .none; scroll.focusRingType = .none
         view.isRichText = false; view.isEditable = editable; view.isSelectable = true; view.allowsUndo = true
         view.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -57,28 +65,46 @@ struct CodeEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         let visibility = PanelVisibility()
         var parent: CodeEditor
+        private var editedRange: NSRange?
+        private static let rules: [(NSRegularExpression, NSColor)] = {
+            let definitions: [(String, NSColor)] = [
+                (#"\b(import|struct|class|enum|func|let|var|if|else|return|guard|async|await|throw|throws|try|private|public|static|const|function|def|for|in|while|export|from|true|false|nil|null)\b"#, .init(calibratedRed: 0.71, green: 0.61, blue: 0.87, alpha: 1)),
+                (#"\b[0-9]+(\.[0-9]+)?\b"#, .init(calibratedRed: 0.85, green: 0.70, blue: 0.48, alpha: 1)),
+                (#""(?:[^"\\]|\\.)*""#, .init(calibratedRed: 0.66, green: 0.78, blue: 0.58, alpha: 1)),
+                (#"(?m)//.*$|^\s*# .*$"#, .init(calibratedWhite: 0.43, alpha: 1))
+            ]
+            return definitions.compactMap { pattern, color in
+                (try? NSRegularExpression(pattern: pattern)).map { ($0, color) }
+            }
+        }()
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            editedRange = NSRange(location: affectedCharRange.location, length: (replacementString ?? "").utf16.count)
+            return true
+        }
         init(_ parent: CodeEditor) { self.parent = parent }
         func textDidChange(_ notification: Notification) {
             guard let view = notification.object as? NSTextView else { return }
-            parent.text = view.string; highlight(view)
+            parent.text = view.string
+            highlight(view, editedRange: editedRange)
+            editedRange = nil
         }
-        func highlight(_ view: NSTextView) {
+        func highlight(_ view: NSTextView, editedRange: NSRange? = nil) {
             guard let storage = view.textStorage else { return }
             // Keep highlighting lightweight for larger files.
             let text = view.string as NSString
-            let range = NSRange(location: 0, length: text.length)
+            let range: NSRange
+            if let editedRange {
+                let location = min(editedRange.location, text.length)
+                range = text.lineRange(for: NSRange(location: location, length: min(editedRange.length, text.length - location)))
+            } else {
+                range = NSRange(location: 0, length: text.length)
+            }
             storage.beginEditing()
             storage.addAttribute(.foregroundColor, value: NSColor(calibratedWhite: 0.85, alpha: 1), range: range)
             if text.length < 120_000 {
-                let rules: [(String, NSColor)] = [
-                    (#"\b(import|struct|class|enum|func|let|var|if|else|return|guard|async|await|throw|throws|try|private|public|static|const|function|def|for|in|while|export|from|true|false|nil|null)\b"#, .init(calibratedRed: 0.71, green: 0.61, blue: 0.87, alpha: 1)),
-                    (#"\b[0-9]+(\.[0-9]+)?\b"#, .init(calibratedRed: 0.85, green: 0.70, blue: 0.48, alpha: 1)),
-                    (#"\"(?:[^\"\\]|\\.)*\""#, .init(calibratedRed: 0.66, green: 0.78, blue: 0.58, alpha: 1)),
-                    (#"(?m)//.*$|^\s*# .*$"#, .init(calibratedWhite: 0.43, alpha: 1))
-                ]
-                for (pattern, color) in rules {
-                    if let expression = try? NSRegularExpression(pattern: pattern) {
-                        for match in expression.matches(in: view.string, range: range) { storage.addAttribute(.foregroundColor, value: color, range: match.range) }
+                for (expression, color) in Self.rules {
+                    for match in expression.matches(in: view.string, range: range) {
+                        storage.addAttribute(.foregroundColor, value: color, range: match.range)
                     }
                 }
             }

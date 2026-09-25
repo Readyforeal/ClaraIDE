@@ -1,0 +1,82 @@
+{
+  "metrics" : [
+    {
+      "cpu_s" : 0.130131,
+      "elapsed_s" : 6.2947546250070445,
+      "main_tick_max_ms" : 20.726749993627891,
+      "main_tick_p95_ms" : 17.507374999695458,
+      "phase" : "idle_three_terminals",
+      "resident_mb" : 162.6875,
+      "thermal_state" : 0,
+      "tick_count" : 377,
+      "ticks_over_33ms" : 0
+    },
+    {
+      "cpu_s" : 3.6747019999999999,
+      "elapsed_s" : 6.4214647916669492,
+      "main_tick_max_ms" : 81.122874995344318,
+      "main_tick_p95_ms" : 30.28529166476801,
+      "phase" : "panel_cycle",
+      "resident_mb" : 170.390625,
+      "thermal_state" : 0,
+      "tick_count" : 356,
+      "ticks_over_33ms" : 14
+    },
+    {
+      "cpu_s" : 1.2928010000000008,
+      "elapsed_s" : 6.331661999996868,
+      "main_tick_max_ms" : 36.025458335643634,
+      "main_tick_p95_ms" : 23.870999997598119,
+      "phase" : "terminal_output",
+      "resident_mb" : 171,
+      "thermal_state" : 0,
+      "tick_count" : 378,
+      "ticks_over_33ms" : 1
+    },
+    {
+      "cpu_s" : 4.2284920000000001,
+      "elapsed_s" : 8.9631985416635871,
+      "main_tick_max_ms" : 87.397333336411975,
+      "main_tick_p95_ms" : 80.27083333581686,
+      "phase" : "editor_typing",
+      "resident_mb" : 228,
+      "thermal_state" : 0,
+      "tick_count" : 351,
+      "ticks_over_33ms" : 60
+    },
+    {
+      "cpu_s" : 2.7190890000000003,
+      "elapsed_s" : 6.3753245416592108,
+      "main_tick_max_ms" : 73.522958336980082,
+      "main_tick_p95_ms" : 49.463166666100733,
+      "phase" : "streamed_markdown",
+      "resident_mb" : 201.015625,
+      "thermal_state" : 0,
+      "tick_count" : 301,
+      "ticks_over_33ms" : 58
+    },
+    {
+      "cpu_s" : 1.6702619999999992,
+      "elapsed_s" : 6.3489310833247146,
+      "main_tick_max_ms" : 60.422499998821877,
+      "main_tick_p95_ms" : 38.150041669723578,
+      "phase" : "chat_scroll",
+      "resident_mb" : 226.578125,
+      "thermal_state" : 0,
+      "tick_count" : 344,
+      "ticks_over_33ms" : 28
+    },
+    {
+      "cpu_s" : 0.41269899999999993,
+      "elapsed_s" : 6.2753543333383277,
+      "main_tick_max_ms" : 29.027208336628973,
+      "main_tick_p95_ms" : 17.594999997527339,
+      "phase" : "idle_after_work",
+      "resident_mb" : 231.171875,
+      "thermal_state" : 0,
+      "tick_count" : 376,
+      "ticks_over_33ms" : 0
+    }
+  ],
+  "note" : "Main-thread timer intervals measure responsiveness, NOT displayed FPS or GPU time."
+}

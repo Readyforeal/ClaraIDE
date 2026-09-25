@@ -16,7 +16,7 @@ struct ProposedEdit: Identifiable {
     let projectID: UUID
     @Published var title: String
     @Published var activity = TerminalActivity()
-    var isPresented = true { didSet { if isPresented { activity.acknowledge() } } }
+    var isPresented = true { didSet { if isPresented && activity.completed { activity.acknowledge() } } }
     private var monitor: Task<Void, Never>?
     let view: LocalProcessTerminalView
     init(project: Project, number: Int) {
@@ -28,7 +28,7 @@ struct ProposedEdit: Identifiable {
         view.nativeForegroundColor = NSColor(calibratedWhite: 0.84, alpha: 1)
         var environment = ProcessInfo.processInfo.environment
         environment["TERM"] = "xterm-256color"
-        view.startProcess(executable: "/bin/zsh", args: ["-l"], environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: project.path)
+        view.startProcess(executable: "/bin/zsh", args: ProcessInfo.processInfo.environment["CLARA_PROFILE_DIRECTORY"] == nil ? ["-l"] : ["-f"], environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: project.path)
         monitor = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 self?.sampleActivity()
@@ -42,7 +42,9 @@ struct ProposedEdit: Identifiable {
         let shellGroup = process.shellPid > 0 ? getpgid(process.shellPid) : -1
         // The interactive shell owns the foreground group while waiting at its prompt.
         let running = foreground > 0 && shellGroup > 0 && foreground != shellGroup
-        activity.update(running: running, visible: isPresented)
+        var next = activity
+        next.update(running: running, visible: isPresented)
+        if next != activity { activity = next }
     }
     func rename() {
         let alert = NSAlert()

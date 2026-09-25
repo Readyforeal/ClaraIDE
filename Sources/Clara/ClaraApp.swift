@@ -3,7 +3,7 @@ import AppKit
 
 @main struct ClaraApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    @StateObject private var store = AppStore()
+    @StateObject private var store = AppStore(stateURL: PerformanceRun.stateURL)
     @StateObject private var updates = UpdateChecker()
     var body: some Scene {
         Window("Clara", id: "workspace") {
@@ -15,7 +15,7 @@ import AppKit
                 .background(WindowChrome())
                 .ignoresSafeArea(.container, edges: .top)
                 .frame(minWidth: 1100, minHeight: 660)
-                .onAppear { delegate.store = store; NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true) }
+                .onAppear { delegate.store = store; PerformanceRun.shared.start(store); NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true) }
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1380, height: 880)
@@ -57,13 +57,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NotificationCenter.default.addObserver(self, selector: #selector(suppressFocusRings(_:)), name: NSWindow.didUpdateNotification, object: nil)
     }
+    private weak var lastFocusedView: NSView?
     @objc private func suppressFocusRings(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
-        func suppress(_ view: NSView) {
+        guard let focused = window.firstResponder as? NSView, focused !== lastFocusedView else { return }
+        lastFocusedView = focused
+        // Focus changes are rare; do not walk the entire native view tree every frame.
+        var ancestor: NSView? = focused
+        while let view = ancestor {
             if view.focusRingType != .none { view.focusRingType = .none }
-            view.subviews.forEach(suppress)
+            ancestor = view.superview
         }
-        if let content = window.contentView { suppress(content) }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
