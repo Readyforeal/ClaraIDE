@@ -11,6 +11,17 @@ struct WallpaperGlass: NSViewRepresentable {
     }
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
+/// Samples this window's content (chat/code), rather than only the desktop wallpaper.
+struct InWindowBlur: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .withinWindow
+        view.state = .active
+        return view
+    }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
 struct WindowChrome: NSViewRepresentable {
     func makeNSView(context: Context) -> ChromeView { ChromeView() }
     func updateNSView(_ view: ChromeView, context: Context) {}
@@ -37,7 +48,15 @@ extension View {
     func floatingGlass(enabled: Bool = true, tinted: Bool = false) -> some View {
         self.background {
             if enabled {
-                Color.clear.glassEffect(.regular.tint(tinted ? .black.opacity(0.55) : .clear), in: RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
+                if tinted {
+                    InWindowBlur()
+                        .overlay(Color.black.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
+                        .glassEffect(.clear.tint(.black.opacity(0.15)), in: RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
+                        .allowsHitTesting(false)
+                } else {
+                    Color.clear.glassEffect(.regular, in: RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
+                }
             }
         }
         .overlay(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous).strokeBorder(.white.opacity(enabled ? 0.10 : 0), lineWidth: 0.5).allowsHitTesting(false))

@@ -6,6 +6,7 @@ struct WorkspaceView: View {
     private var splitTerminal: Bool { store.showTerminal && store.terminalPlacement != .full }
     private var shortChat: Bool { store.showTerminal && store.terminalPlacement == .bottom }
     private var compactChat: Bool { store.expandedDocument != nil || splitTerminal }
+    @State private var composerHeight: CGFloat = 150
     @State private var review: ProposedEdit?
     @State private var gitBranch: String?
     var body: some View {
@@ -25,6 +26,9 @@ struct WorkspaceView: View {
                         chatView.padding(.bottom, splitTerminal ? terminalLayout.chatBottomPadding : WorkspaceLayout.bottomClearance)
                             .frame(width: splitTerminal ? terminalLayout.chat.width : layout.chatWidth,
                                    height: splitTerminal ? terminalLayout.chat.height : geometry.size.height)
+                            .blur(radius: store.showTerminal && store.terminalPlacement == .full ? 10 : 0)
+                            .allowsHitTesting(!store.showTerminal || splitTerminal)
+                            .accessibilityHidden(store.showTerminal && !splitTerminal)
                         FloatingWorkspace()
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -138,11 +142,13 @@ struct WorkspaceView: View {
             }
     }
     private var chatView: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
             if shortChat && store.chat?.messages.isEmpty != false {
                 Spacer(minLength: 8)
                 Text("What are we building?").font(.system(size: 22, weight: .medium))
                 Spacer(minLength: 8)
+                Color.clear.frame(height: composerHeight + 12)
             } else if store.chat?.messages.isEmpty != false {
                 Spacer()
                 VStack(alignment: .leading, spacing: 20) {
@@ -158,6 +164,7 @@ struct WorkspaceView: View {
                     }.padding(.top, 12)
                 }.frame(maxWidth: 660, alignment: .leading).padding(.horizontal, compactChat ? 16 : 32)
                 Spacer()
+                Color.clear.frame(height: composerHeight + 16)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -168,13 +175,23 @@ struct WorkspaceView: View {
                             if store.runningChat == store.chat?.id {
                                 HStack(spacing: 8) { ProgressView().controlSize(.mini); Text(store.activity).font(.system(size: 11)).foregroundStyle(Palette.muted) }
                             }
-                            Color.clear.frame(height: 1).id("bottom")
+                            Color.clear.frame(height: composerHeight + 24).id("bottom")
                         }.frame(maxWidth: 740).padding(.horizontal, compactChat ? 16 : 40).padding(.vertical, 34).frame(maxWidth: .infinity)
                     }
+                    .mask(alignment: .bottom) {
+                        VStack(spacing: 0) {
+                            Rectangle().fill(.black)
+                            LinearGradient(colors: [.black, .black.opacity(0.65), .clear], startPoint: .top, endPoint: .bottom)
+                                .frame(height: min(100, composerHeight))
+                        }
+                    }
+                    .onChange(of: composerHeight) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: store.chat?.messages.last?.content) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: store.chat?.id) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
                 }
             }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+            VStack(spacing: 0) {
             if !store.proposedEdits.filter({ $0.projectID == store.project?.id }).isEmpty {
                 HStack {
                     Image(systemName: "doc.badge.gearshape").foregroundStyle(Palette.icon)
@@ -185,9 +202,11 @@ struct WorkspaceView: View {
                     }
                 }.padding(12).background(Palette.panel, in: RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous)).frame(maxWidth: 740).padding(.horizontal, compactChat ? 16 : 32).padding(.bottom, 10)
             }
-            composer.frame(maxWidth: 740)
+            composer.frame(maxWidth: 800)
                 .padding(.leading, compactChat ? WorkspaceLayout.panelInset : 32)
                 .padding(.trailing, shortChat ? WorkspaceLayout.panelInset : compactChat ? 0 : 32)
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private func suggestion(_ title: String, icon: String, prompt: String) -> some View {
@@ -249,8 +268,7 @@ struct WorkspaceView: View {
                 }
             }
         }.padding(compactChat ? 12 : 16)
-            .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
-            .floatingGlass()
+            .floatingGlass(tinted: true)
     }
 }
 
