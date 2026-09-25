@@ -8,7 +8,8 @@ final class NotchPeekTests: XCTestCase {
         let layout = NotchGeometry(screen: screen,
             left: CGRect(x: -1512, y: 1110, width: 650, height: 32),
             right: CGRect(x: -650, y: 1110, width: 650, height: 32), safeTop: 32)
-        XCTAssertEqual(layout.collapsed.minX, -900)
+        XCTAssertEqual(layout.collapsed.minX, -862)
+        XCTAssertEqual(layout.collapsed.width, 212, "The idle trigger must occupy only the physical notch")
         XCTAssertEqual(layout.collapsed.maxX, -650)
         XCTAssertEqual(layout.collapsed.maxY, screen.maxY)
         XCTAssertEqual(layout.expanded.maxY, screen.maxY)

@@ -13,8 +13,8 @@ struct NotchGeometry {
         let notchLeft = hasNotch ? left!.maxX : screen.midX
         let notchRight = hasNotch ? right!.minX : screen.midX
         topInset = hasNotch ? safeTop : 28
-        collapsed = CGRect(x: hasNotch ? notchLeft - 38 : screen.midX - 19, y: screen.maxY - topInset,
-                           width: max(38, notchRight - notchLeft + 38), height: topInset)
+        collapsed = CGRect(x: hasNotch ? notchLeft : screen.midX - 19, y: screen.maxY - topInset,
+                           width: hasNotch ? notchRight - notchLeft : 38, height: topInset)
         let width = min(620, screen.width - 32)
         let height = min(520, screen.height - 60)
         expanded = CGRect(x: min(screen.maxX - width - 16, max(screen.minX + 16, (notchLeft + notchRight) / 2 - width / 2)),
@@ -229,14 +229,10 @@ private struct PeekShell: View {
                 PeekContent(controller: controller).environmentObject(controller.store)
                     .frame(width: controller.width, height: controller.height)
             } else {
-                HStack {
-                    Image(nsImage: NSApp.applicationIconImage).resizable().scaledToFit().frame(width: 21, height: 21)
-                        .padding(.leading, 8).accessibilityLabel("Clara quick access")
-                    Spacer(minLength: 0)
-                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                Color.clear
                     .contentShape(Rectangle()).onTapGesture { controller.engage() }
+                    .accessibilityLabel("Clara notch quick access")
                     .accessibilityAddTraits(.isButton).accessibilityAction { controller.engage() }
-                    .help("Hover for Clara · Click to pin")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

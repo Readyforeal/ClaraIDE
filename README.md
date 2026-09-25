@@ -101,7 +101,7 @@ Servo integration reads the live `Servo/sites.json` manifest, including `.test` 
 
 ## Clara Peek
 
-Clara includes its own notch companion—no separate app or installation. A small icon sits just left of the camera housing; hover briefly to expand a pure-black chat panel. It uses the same selected project, conversation, draft, and model as the main window. Pick another project/chat, send a message, or open the full workspace. Clicking into the composer/terminal pins the panel; Escape or the collapse button tucks it away. Project menus stay open while you choose an item.
+Clara includes its own notch companion—no separate app or installation. Hover briefly anywhere over the camera housing to expand the dark glass chat panel. The idle trigger matches the physical notch, with no icon or extension beside it. It uses the same selected project, conversation, draft, and model as the main window. Pick another project/chat, send a message, or open the full workspace. Clicking into the composer/terminal pins the panel; Escape or the collapse button tucks it away. Project menus stay open while you choose an item.
 
 The terminal button opens a separate temporary shell in the selected project folder. Each project's Peek shell survives collapse and project switches. Its close button ends that shell; quitting Clara ends all Peek shells. They are not saved between launches or added to the main terminal dock.
 
