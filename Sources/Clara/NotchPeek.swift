@@ -1,0 +1,332 @@
+import AppKit
+import Combine
+import SwiftUI
+import SwiftTerm
+
+/// All coordinates are in AppKit's global, bottom-up screen coordinate space.
+struct NotchGeometry {
+    let collapsed: CGRect
+    let expanded: CGRect
+    let topInset: CGFloat
+    init(screen: CGRect, left: CGRect?, right: CGRect?, safeTop: CGFloat) {
+        let hasNotch = safeTop > 0 && left != nil && right != nil
+        let notchLeft = hasNotch ? left!.maxX : screen.midX
+        let notchRight = hasNotch ? right!.minX : screen.midX
+        topInset = hasNotch ? safeTop : 28
+        collapsed = CGRect(x: hasNotch ? notchLeft - 38 : screen.midX - 19, y: screen.maxY - topInset,
+                           width: max(38, notchRight - notchLeft + 38), height: topInset)
+        let width = min(620, screen.width - 32)
+        let height = min(590, screen.height - 60)
+        expanded = CGRect(x: min(screen.maxX - width - 16, max(screen.minX + 16, (notchLeft + notchRight) / 2 - width / 2)),
+                          y: screen.maxY - height, width: width, height: height)
+    }
+}
+
+final class PeekPanel: NSPanel {
+    var escape: (() -> Void)?
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+    override func cancelOperation(_ sender: Any?) { escape?() }
+}
+
+final class PeekSurface: NSView {
+    var entered: (() -> Void)?
+    var exited: (() -> Void)?
+    var clicked: (() -> Void)?
+    private var tracking: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area); tracking = area
+    }
+    override func mouseEntered(with event: NSEvent) { entered?() }
+    override func mouseExited(with event: NSEvent) { exited?() }
+    override func mouseDown(with event: NSEvent) { clicked?() }
+}
+
+@MainActor final class NotchPeekController: NSObject, ObservableObject {
+    @Published private(set) var expanded = false
+    @Published var pinned = false
+    @Published var terminalMode = false
+    @Published private(set) var terminals: [UUID: TerminalSession] = [:]
+    @Published private(set) var topInset: CGFloat = 32
+    @Published private(set) var width: CGFloat = 620
+    @Published private(set) var height: CGFloat = 590
+    @Published var enabled: Bool {
+        didSet {
+            UserDefaults.standard.set(enabled, forKey: "claraNotchEnabled")
+            if enabled { position() } else { collapse(); panel?.orderOut(nil) }
+        }
+    }
+    let store: AppStore
+    weak var workspaceWindow: NSWindow?
+    private(set) var panel: PeekPanel?
+    private var geometry: NotchGeometry?
+    private var hoverTask: DispatchWorkItem?
+    private var exitTask: DispatchWorkItem?
+    private var transition = 0
+    private var menuTracking = false
+    private var observers: [NSObjectProtocol] = []
+    private var clickMonitor: Any?
+    private var projectSubscription: AnyCancellable?
+
+    init(store: AppStore) {
+        self.store = store
+        enabled = UserDefaults.standard.object(forKey: "claraNotchEnabled") as? Bool ?? true
+        super.init()
+    }
+    func start(workspace: NSWindow?) {
+        guard panel == nil else { return }
+        workspaceWindow = workspace
+        let panel = PeekPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.hidesOnDeactivate = false; panel.isReleasedWhenClosed = false
+        panel.isFloatingPanel = true; panel.becomesKeyOnlyIfNeeded = false
+        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.escape = { [weak self] in self?.collapse() }
+        let surface = PeekSurface()
+        surface.wantsLayer = true; surface.layer?.backgroundColor = NSColor.black.cgColor
+        surface.layer?.cornerRadius = 20; surface.layer?.cornerCurve = .continuous
+        surface.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        surface.layer?.masksToBounds = true
+        surface.entered = { [weak self] in self?.hoverEntered() }
+        surface.exited = { [weak self] in self?.hoverExited() }
+        surface.clicked = { [weak self] in self?.engage() }
+        let host = NSHostingView(rootView: PeekShell(controller: self))
+        host.frame = surface.bounds; host.autoresizingMask = [.width, .height]
+        surface.addSubview(host); panel.contentView = surface
+        self.panel = panel
+        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.collapse(); self?.position() }
+        })
+        observers.append(NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.menuTracking = true; self?.exitTask?.cancel() }
+        })
+        observers.append(NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.menuTracking = false
+                if self.panel?.frame.contains(NSEvent.mouseLocation) == false { self.hoverExited() }
+            }
+        })
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+            let consumed = MainActor.assumeIsolated {
+                guard let self else { return false }
+                if event.window === self.panel {
+                    if event.type == .keyDown && event.keyCode == 53 { self.collapse(); return true }
+                    if event.type == .keyDown { self.pinned = true }
+                    if event.type == .leftMouseDown, let surface = self.panel?.contentView {
+                        var hit = surface.hitTest(surface.convert(event.locationInWindow, from: nil))
+                        while let view = hit {
+                            if view is NSTextView || view is LocalProcessTerminalView { self.engage(); break }
+                            hit = view.superview
+                        }
+                    }
+                }
+                return false
+            }
+            return consumed ? nil : event
+        }
+        projectSubscription = store.$workspace.map { Set($0.projects.map(\.id)) }.removeDuplicates().sink { [weak self] ids in
+            guard let self else { return }
+            for id in Array(self.terminals.keys) where !ids.contains(id) { self.terminals.removeValue(forKey: id)?.stop() }
+        }
+        if enabled { position() }
+    }
+    private func position() {
+        guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 && $0.auxiliaryTopLeftArea != nil }) ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        let layout = NotchGeometry(screen: screen.frame, left: screen.auxiliaryTopLeftArea, right: screen.auxiliaryTopRightArea, safeTop: screen.safeAreaInsets.top)
+        geometry = layout; topInset = layout.topInset; width = layout.expanded.width; height = layout.expanded.height
+        panel?.setFrame(expanded ? layout.expanded : layout.collapsed, display: true)
+        if enabled { panel?.orderFrontRegardless() }
+    }
+    func hoverEntered() {
+        exitTask?.cancel()
+        guard !expanded else { return }
+        hoverTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in self?.expand() }
+        hoverTask = task; DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: task)
+    }
+    func hoverExited() {
+        hoverTask?.cancel(); exitTask?.cancel()
+        guard !pinned, !menuTracking else { return }
+        let task = DispatchWorkItem { [weak self] in if self?.pinned == false { self?.collapse() } }
+        exitTask = task; DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: task)
+    }
+    func expand() {
+        guard enabled, let panel, let geometry else { return }
+        hoverTask?.cancel(); exitTask?.cancel()
+        guard !expanded else { return }
+        transition += 1; let token = transition
+        // Animate only the black shell; mount the chat once it has room to lay out.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.20
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(geometry.expanded, display: true)
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.transition == token else { return }
+                self.expanded = true
+            }
+        }
+    }
+    func engage() { exitTask?.cancel(); pinned = true; expand(); panel?.makeKey() }
+    func collapse() {
+        hoverTask?.cancel(); exitTask?.cancel(); transition += 1
+        expanded = false; pinned = false
+        terminals.values.forEach { $0.isPresented = false }
+        panel?.makeFirstResponder(nil); panel?.resignKey()
+        guard let geometry, let panel else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(geometry.collapsed, display: true)
+        }
+    }
+    func quickTerminal() {
+        guard let project = store.project else { return }
+        if terminals[project.id] == nil { terminals[project.id] = TerminalSession(project: project, number: 1) }
+        terminalMode = true; engage()
+    }
+    func closeTerminal() {
+        guard let id = store.project?.id else { return }
+        terminals.removeValue(forKey: id)?.stop(); terminalMode = false
+    }
+    func openWorkspace() {
+        collapse(); NSApp.activate(ignoringOtherApps: true)
+        let workspace = workspaceWindow ?? NSApp.windows.first(where: { $0 !== panel && $0.styleMask.contains(.titled) })
+        workspace?.deminiaturize(nil); workspace?.makeKeyAndOrderFront(nil)
+    }
+    func send(_ text: String) {
+        if store.chat == nil {
+            if let project = store.project { store.newProjectChat(project.id) } else { store.newChat() }
+        }
+        store.draft = text; store.send()
+        if store.showSettings { openWorkspace() }
+    }
+    func shutdown() {
+        hoverTask?.cancel(); exitTask?.cancel(); transition += 1
+        terminals.values.forEach { $0.stop() }; terminals.removeAll()
+        observers.forEach(NotificationCenter.default.removeObserver); observers.removeAll()
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }; clickMonitor = nil
+        projectSubscription?.cancel(); panel?.orderOut(nil); panel?.contentView = nil; panel?.close(); panel = nil
+    }
+}
+
+private struct PeekShell: View {
+    @ObservedObject var controller: NotchPeekController
+    var body: some View {
+        Group {
+            if controller.expanded {
+                PeekContent(controller: controller).environmentObject(controller.store)
+                    .frame(width: controller.width, height: controller.height)
+            } else {
+                HStack {
+                    Image(nsImage: NSApp.applicationIconImage).resizable().scaledToFit().frame(width: 21, height: 21)
+                        .padding(.leading, 8).accessibilityLabel("Clara quick access")
+                    Spacer(minLength: 0)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .contentShape(Rectangle()).onTapGesture { controller.engage() }
+                    .accessibilityAddTraits(.isButton).accessibilityAction { controller.engage() }
+                    .help("Hover for Clara · Click to pin")
+            }
+        }.preferredColorScheme(.dark).tint(Palette.accent).foregroundStyle(.white.opacity(0.88)).focusEffectDisabled()
+    }
+}
+
+private struct PeekContent: View {
+    @ObservedObject var controller: NotchPeekController
+    @EnvironmentObject var store: AppStore
+    private var chats: [Conversation] { store.project?.chats ?? store.workspace.generalChats }
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Menu {
+                    Button("General chats") {
+                        if let chat = store.workspace.generalChats.first { store.selectChat(chat.id) } else { store.newChat() }
+                    }
+                    Divider()
+                    ForEach(store.workspace.projects) { project in Button(project.name) { store.selectProject(project.id) } }
+                } label: { Label(store.project?.name ?? "General", systemImage: "folder").lineLimit(1) }
+                .menuStyle(.borderlessButton).tint(Palette.icon).foregroundStyle(Palette.icon).frame(maxWidth: 190)
+                Menu {
+                    ForEach(chats) { chat in Button(chat.title) { store.selectChat(chat.id) } }
+                    Divider()
+                    Button("New conversation") {
+                        if let project = store.project { store.newProjectChat(project.id) } else { store.newChat() }
+                    }
+                } label: { Text(store.chat?.title ?? "New conversation").lineLimit(1) }
+                .menuStyle(.borderlessButton).tint(Palette.icon).foregroundStyle(Palette.icon).frame(maxWidth: .infinity)
+                IconButton(icon: controller.terminalMode ? "text.bubble" : "terminal", help: controller.terminalMode ? "Show chat" : "Quick terminal") {
+                    if controller.terminalMode { controller.terminalMode = false } else { controller.quickTerminal() }
+                }.disabled(store.project == nil && !controller.terminalMode)
+                IconButton(icon: controller.pinned ? "pin.slash" : "pin", help: controller.pinned ? "Unpin" : "Pin open") { controller.pinned.toggle() }
+                IconButton(icon: "arrow.up.right.square", help: "Open in Clara") { controller.openWorkspace() }
+                IconButton(icon: "chevron.up", help: "Collapse") { controller.collapse() }
+            }.font(.system(size: 11))
+            if controller.terminalMode {
+                if let project = store.project, let session = controller.terminals[project.id] {
+                    PeekTerminal(session: session, close: controller.closeTerminal).id(session.id)
+                } else {
+                    Spacer()
+                    Button("Start quick terminal") { controller.quickTerminal() }.disabled(store.project == nil)
+                    Text("Select a project for its own temporary shell.").font(.caption).foregroundStyle(Palette.muted)
+                    Spacer()
+                }
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 20) {
+                            if store.chat?.messages.isEmpty != false {
+                                Text("What are we building?").font(.system(size: 23, weight: .medium)).padding(.top, 30)
+                                Text("Your current Clara conversation, right here.").foregroundStyle(Palette.muted)
+                            }
+                            ForEach(Array((store.chat?.messages ?? []).suffix(30))) { message in MessageView(message: message).id(message.id) }
+                            if store.runningChat == store.chat?.id { Text(store.activity).font(.caption).foregroundStyle(Palette.muted) }
+                            Color.clear.frame(height: 1).id("peek-bottom")
+                        }.padding(.horizontal, 4).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .onAppear { proxy.scrollTo("peek-bottom", anchor: .bottom) }
+                    .onChange(of: store.chat?.messages.last?.content) { _, _ in proxy.scrollTo("peek-bottom", anchor: .bottom) }
+                    .onChange(of: store.chat?.id) { _, _ in proxy.scrollTo("peek-bottom", anchor: .bottom) }
+                }
+                if let error = store.error { Text(error).font(.caption).foregroundStyle(.red).lineLimit(3) }
+                VStack(spacing: 6) {
+                    ChatInput(text: $store.draft, enabled: store.runningChat == nil, submit: controller.send).frame(height: 64)
+                    HStack {
+                        Button(store.model.isEmpty ? "Choose model" : String(store.model.split(separator: "/").last ?? "Model")) {
+                            store.showSettings = true; controller.openWorkspace()
+                        }.lineLimit(1).font(.system(size: 10)).buttonStyle(.plain).foregroundStyle(Palette.muted)
+                        Spacer()
+                        if store.runningChat != nil {
+                            IconButton(icon: "stop", help: "Stop response") { store.cancel() }
+                        } else {
+                            IconButton(icon: "arrow.up", help: "Send message") { controller.send(store.draft) }
+                                .disabled(store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                }.padding(12).background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 14))
+            }
+        }.padding(.horizontal, 18).padding(.bottom, 18).padding(.top, controller.topInset + 12)
+    }
+}
+
+private struct PeekTerminal: View {
+    @ObservedObject var session: TerminalSession
+    let close: () -> Void
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                if session.activity.running { Circle().fill(.green).frame(width: 5, height: 5) }
+                Text("Temporary terminal").font(.system(size: 11)).foregroundStyle(Palette.muted)
+                Spacer()
+                IconButton(icon: "xmark", help: "End terminal session") { close() }
+            }
+            TerminalHost(session: session, isActive: true)
+                .onAppear { session.isPresented = true }.onDisappear { session.isPresented = false }
+        }
+    }
+}

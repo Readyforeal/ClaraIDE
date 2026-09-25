@@ -15,7 +15,7 @@ import AppKit
                 .background(WindowChrome())
                 .ignoresSafeArea(.container, edges: .top)
                 .frame(minWidth: 1100, minHeight: 660)
-                .onAppear { delegate.store = store; PerformanceRun.shared.start(store); NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true) }
+                .onAppear { delegate.store = store; delegate.startPeek(store); PerformanceRun.shared.start(store); NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true) }
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1380, height: 880)
@@ -33,6 +33,10 @@ import AppKit
             CommandGroup(replacing: .appSettings) { Button("Settings…") { store.showSettings = true }.keyboardShortcut(",") }
             CommandGroup(replacing: .saveItem) { Button("Save File") { store.saveFile() }.keyboardShortcut("s").disabled(store.fileURL == nil) }
             CommandMenu("Workspace") {
+                Button("Show Clara Peek") { delegate.peek?.enabled = true; delegate.peek?.engage() }
+                    .keyboardShortcut("p", modifiers: [.command, .option])
+                Toggle("Enable Clara Peek", isOn: Binding(get: { delegate.peek?.enabled ?? true }, set: { delegate.peek?.enabled = $0 }))
+                Divider()
                 Button("Open Browser") { store.openBrowser() }.keyboardShortcut("b", modifiers: [.command, .shift])
                 Button("Undo Delete Conversation") { store.undoDeleteChat() }.disabled(store.deletedChat == nil)
                 Button("Toggle Project Sidebar") { store.toggleSidebar() }.keyboardShortcut("s", modifiers: [.command, .control])
@@ -45,8 +49,15 @@ import AppKit
         }
     }
 }
-final class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     var store: AppStore?
+    var peek: NotchPeekController?
+    func startPeek(_ store: AppStore) {
+        guard peek == nil, PerformanceRun.directory == nil else { return }
+        let controller = NotchPeekController(store: store)
+        peek = controller
+        controller.start(workspace: NSApp.windows.first(where: { $0.styleMask.contains(.titled) }))
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Also set the running Dock icon when launching a local unsigned/development bundle.
         // Native layered builds let macOS resolve their asset-catalog icon instead.
@@ -72,7 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard store?.confirmDiscard() != false else { return .terminateCancel }
-        store?.persist(); store?.sessions.forEach { $0.stop() }; return .terminateNow
+        peek?.shutdown(); store?.persist(); store?.sessions.forEach { $0.stop() }; return .terminateNow
     }
 }
 enum Palette {

@@ -98,3 +98,11 @@ Terminal and editor slabs use translucent, dark-tinted glass with in-window back
 Run `./scripts/profile.sh` after building to exercise an isolated synthetic workspace without touching your chats or making API calls. See [the profiling report](docs/PERFORMANCE.md) for measurements, retained optimizations, and remaining bottlenecks.
 
 Servo integration reads the live `Servo/sites.json` manifest, including `.test` names and HTTPS addresses, instead of guessing a URL from a port. Running-site records expire after 20 seconds without a heartbeat. Opening the browser refreshes discovery; `.test` names default to HTTP.
+
+## Clara Peek
+
+Clara includes its own notch companion—no separate app or installation. A small icon sits just left of the camera housing; hover briefly to expand a pure-black chat panel. It uses the same selected project, conversation, draft, and model as the main window. Pick another project/chat, send a message, or open the full workspace. Clicking into the composer/terminal pins the panel; Escape or the collapse button tucks it away. Project menus stay open while you choose an item.
+
+The terminal button opens a separate temporary shell in the selected project folder. Each project's Peek shell survives collapse and project switches. Its close button ends that shell; quitting Clara ends all Peek shells. They are not saved between launches or added to the main terminal dock.
+
+Use **Workspace → Enable Clara Peek** to turn it off/on, or **Show Clara Peek** (`⌥⌘P`, while Clara is active). Notched displays use the system-reported housing geometry; other displays get a centered top-edge tab. Display changes reposition the panel, and Reduce Motion is respected. Hover doesn't activate Clara or steal keyboard focus. Only the latest 30 messages are rendered in Peek; the full history remains in the main workspace. Peek stays available while Clara is running.
