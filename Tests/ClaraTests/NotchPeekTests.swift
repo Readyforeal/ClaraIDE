@@ -15,6 +15,17 @@ final class NotchPeekTests: XCTestCase {
         XCTAssertTrue(screen.contains(layout.expanded))
         XCTAssertEqual(layout.topInset, 32)
     }
+    @MainActor func testPanelCanOccupyMenuBarAndNotchArea() throws {
+        let screen = try XCTUnwrap(NSScreen.main)
+        let panel = PeekPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        defer { panel.close() }
+        panel.isReleasedWhenClosed = false
+        let target = CGRect(x: screen.frame.midX - 120, y: screen.frame.maxY - 32, width: 240, height: 32)
+        XCTAssertEqual(panel.constrainFrameRect(target, to: screen), target)
+        panel.setFrame(target, display: true)
+        panel.orderFrontRegardless()
+        XCTAssertEqual(panel.frame.maxY, screen.frame.maxY, accuracy: 0.5)
+    }
     func testExternalDisplayFallbackIsCenteredAndFitsSmallScreen() {
         let screen = CGRect(x: 1600, y: -400, width: 800, height: 600)
         let layout = NotchGeometry(screen: screen, left: nil, right: nil, safeTop: 0)
@@ -68,8 +79,14 @@ final class NotchPeekTests: XCTestCase {
         XCTAssertTrue(peek.store === store)
         if let view = peek.panel?.contentView, let output = ProcessInfo.processInfo.environment["CLARA_PEEK_RENDER"] {
             view.layoutSubtreeIfNeeded()
+            // Let SwiftUI commit the newly mounted content before capturing its native view.
+            try await Task.sleep(for: .milliseconds(250))
+            view.displayIfNeeded()
             if let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                 view.cacheDisplay(in: view.bounds, to: bitmap)
+                if let context = NSGraphicsContext(bitmapImageRep: bitmap)?.cgContext {
+                    view.layer?.render(in: context)
+                }
                 try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))
             }
         }

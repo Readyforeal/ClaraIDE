@@ -16,7 +16,7 @@ struct NotchGeometry {
         collapsed = CGRect(x: hasNotch ? notchLeft - 38 : screen.midX - 19, y: screen.maxY - topInset,
                            width: max(38, notchRight - notchLeft + 38), height: topInset)
         let width = min(620, screen.width - 32)
-        let height = min(590, screen.height - 60)
+        let height = min(520, screen.height - 60)
         expanded = CGRect(x: min(screen.maxX - width - 16, max(screen.minX + 16, (notchLeft + notchRight) / 2 - width / 2)),
                           y: screen.maxY - height, width: width, height: height)
     }
@@ -24,6 +24,8 @@ struct NotchGeometry {
 
 final class PeekPanel: NSPanel {
     var escape: (() -> Void)?
+    // AppKit otherwise moves borderless windows below the menu bar/notch.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     override func cancelOperation(_ sender: Any?) { escape?() }
@@ -52,7 +54,7 @@ final class PeekSurface: NSView {
     @Published private(set) var terminals: [UUID: TerminalSession] = [:]
     @Published private(set) var topInset: CGFloat = 32
     @Published private(set) var width: CGFloat = 620
-    @Published private(set) var height: CGFloat = 590
+    @Published private(set) var height: CGFloat = 520
     @Published var enabled: Bool {
         didSet {
             UserDefaults.standard.set(enabled, forKey: "claraNotchEnabled")
@@ -88,7 +90,7 @@ final class PeekSurface: NSView {
         panel.appearance = NSAppearance(named: .darkAqua)
         panel.escape = { [weak self] in self?.collapse() }
         let surface = PeekSurface()
-        surface.wantsLayer = true; surface.layer?.backgroundColor = NSColor.black.cgColor
+        surface.wantsLayer = true; surface.layer?.backgroundColor = NSColor.clear.cgColor
         surface.layer?.cornerRadius = 20; surface.layer?.cornerCurve = .continuous
         surface.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         surface.layer?.masksToBounds = true
@@ -163,13 +165,15 @@ final class PeekSurface: NSView {
         transition += 1; let token = transition
         // Animate only the black shell; mount the chat once it has room to lay out.
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.20
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.34
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.76, 0, 0.16, 1)
             panel.animator().setFrame(geometry.expanded, display: true)
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.transition == token else { return }
                 self.expanded = true
+                self.panel?.hasShadow = true
+                self.panel?.invalidateShadow()
             }
         }
     }
@@ -177,12 +181,13 @@ final class PeekSurface: NSView {
     func collapse() {
         hoverTask?.cancel(); exitTask?.cancel(); transition += 1
         expanded = false; pinned = false
+        panel?.hasShadow = false
         terminals.values.forEach { $0.isPresented = false }
         panel?.makeFirstResponder(nil); panel?.resignKey()
         guard let geometry, let panel else { return }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.18
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.28
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.76, 0, 0.16, 1)
             panel.animator().setFrame(geometry.collapsed, display: true)
         }
     }
@@ -233,7 +238,22 @@ private struct PeekShell: View {
                     .accessibilityAddTraits(.isButton).accessibilityAction { controller.engage() }
                     .help("Hover for Clara · Click to pin")
             }
-        }.preferredColorScheme(.dark).tint(Palette.accent).foregroundStyle(.white.opacity(0.88)).focusEffectDisabled()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            if controller.expanded {
+                WallpaperGlass()
+                    .overlay(LinearGradient(stops: [
+                        .init(color: .black, location: 0),
+                        .init(color: .black, location: 0.15),
+                        .init(color: .black.opacity(0.88), location: 0.55),
+                        .init(color: .black.opacity(0.68), location: 1)
+                    ], startPoint: .top, endPoint: .bottom))
+                    .allowsHitTesting(false)
+            } else { Color.black }
+        }
+        .ignoresSafeArea()
+        .preferredColorScheme(.dark).tint(Palette.accent).foregroundStyle(.white.opacity(0.88)).focusEffectDisabled()
     }
 }
 
@@ -242,7 +262,51 @@ private struct PeekContent: View {
     @EnvironmentObject var store: AppStore
     private var chats: [Conversation] { store.project?.chats ?? store.workspace.generalChats }
     var body: some View {
-        VStack(spacing: 12) {
+        ZStack(alignment: .top) {
+            if controller.terminalMode {
+                Group {
+                    if let project = store.project, let session = controller.terminals[project.id] {
+                        PeekTerminal(session: session, close: controller.closeTerminal).id(session.id)
+                    } else {
+                        VStack {
+                            Spacer()
+                            Button("Start quick terminal") { controller.quickTerminal() }.disabled(store.project == nil)
+                            Text("Select a project for its own temporary shell.").font(.caption).foregroundStyle(Palette.muted)
+                            Spacer()
+                        }
+                    }
+                }.padding(.horizontal, 18).padding(.bottom, 18).padding(.top, controller.topInset + 56)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 20) {
+                            if store.chat?.messages.isEmpty != false {
+                                Text("What are we building?").font(.system(size: 23, weight: .medium)).padding(.top, 20)
+                                Text("Your current Clara conversation, right here.").foregroundStyle(Palette.muted)
+                            }
+                            ForEach(Array((store.chat?.messages ?? []).suffix(30))) { message in MessageView(message: message).id(message.id) }
+                            if let running = store.runningChat, running == store.chat?.id { Text(store.activity).font(.caption).foregroundStyle(Palette.muted) }
+                            Color.clear.frame(height: 132).id("peek-bottom")
+                        }.padding(.horizontal, 22).padding(.top, controller.topInset + 64)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.78), .init(color: .clear, location: 0.97)], startPoint: .top, endPoint: .bottom))
+                    .onAppear { proxy.scrollTo("peek-bottom", anchor: .bottom) }
+                    .onChange(of: store.chat?.messages.last?.content) { _, _ in proxy.scrollTo("peek-bottom", anchor: .bottom) }
+                    .onChange(of: store.chat?.id) { _, _ in proxy.scrollTo("peek-bottom", anchor: .bottom) }
+                }
+                VStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    if let error = store.error { Text(error).font(.caption).foregroundStyle(.red).lineLimit(2) }
+                    composer
+                }.padding(.horizontal, 18).padding(.bottom, 18)
+            }
+            header
+                .padding(.horizontal, 18).padding(.top, controller.topInset + 8).padding(.bottom, 24)
+                .background(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.65), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+        }
+    }
+    private var header: some View {
             HStack(spacing: 8) {
                 Menu {
                     Button("General chats") {
@@ -267,34 +331,9 @@ private struct PeekContent: View {
                 IconButton(icon: "arrow.up.right.square", help: "Open in Clara") { controller.openWorkspace() }
                 IconButton(icon: "chevron.up", help: "Collapse") { controller.collapse() }
             }.font(.system(size: 11))
-            if controller.terminalMode {
-                if let project = store.project, let session = controller.terminals[project.id] {
-                    PeekTerminal(session: session, close: controller.closeTerminal).id(session.id)
-                } else {
-                    Spacer()
-                    Button("Start quick terminal") { controller.quickTerminal() }.disabled(store.project == nil)
-                    Text("Select a project for its own temporary shell.").font(.caption).foregroundStyle(Palette.muted)
-                    Spacer()
-                }
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 20) {
-                            if store.chat?.messages.isEmpty != false {
-                                Text("What are we building?").font(.system(size: 23, weight: .medium)).padding(.top, 30)
-                                Text("Your current Clara conversation, right here.").foregroundStyle(Palette.muted)
-                            }
-                            ForEach(Array((store.chat?.messages ?? []).suffix(30))) { message in MessageView(message: message).id(message.id) }
-                            if store.runningChat == store.chat?.id { Text(store.activity).font(.caption).foregroundStyle(Palette.muted) }
-                            Color.clear.frame(height: 1).id("peek-bottom")
-                        }.padding(.horizontal, 4).frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .onAppear { proxy.scrollTo("peek-bottom", anchor: .bottom) }
-                    .onChange(of: store.chat?.messages.last?.content) { _, _ in proxy.scrollTo("peek-bottom", anchor: .bottom) }
-                    .onChange(of: store.chat?.id) { _, _ in proxy.scrollTo("peek-bottom", anchor: .bottom) }
-                }
-                if let error = store.error { Text(error).font(.caption).foregroundStyle(.red).lineLimit(3) }
-                VStack(spacing: 6) {
+    }
+    private var composer: some View {
+        VStack(spacing: 6) {
                     ChatInput(text: $store.draft, enabled: store.runningChat == nil, submit: controller.send).frame(height: 64)
                     HStack {
                         Button(store.model.isEmpty ? "Choose model" : String(store.model.split(separator: "/").last ?? "Model")) {
@@ -308,9 +347,7 @@ private struct PeekContent: View {
                                 .disabled(store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                     }
-                }.padding(12).background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 14))
-            }
-        }.padding(.horizontal, 18).padding(.bottom, 18).padding(.top, controller.topInset + 12)
+                }.padding(12).floatingGlass(tinted: true, radius: 16)
     }
 }
 
