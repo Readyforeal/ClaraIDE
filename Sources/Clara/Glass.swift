@@ -34,10 +34,10 @@ struct WindowChrome: NSViewRepresentable {
     }
 }
 extension View {
-    func floatingGlass(enabled: Bool = true) -> some View {
+    func floatingGlass(enabled: Bool = true, tinted: Bool = false) -> some View {
         self.background {
             if enabled {
-                Color.clear.glassEffect(.regular, in: RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
+                Color.clear.glassEffect(.regular.tint(tinted ? .black.opacity(0.55) : .clear), in: RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
             }
         }
         .overlay(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous).strokeBorder(.white.opacity(enabled ? 0.10 : 0), lineWidth: 0.5).allowsHitTesting(false))

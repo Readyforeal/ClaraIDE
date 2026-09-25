@@ -39,7 +39,8 @@ else
   swift scripts/build-icon.swift "Assets/Clara.icon/Assets/clara 2.png" .build/Clara.iconset
   iconutil -c icns .build/Clara.iconset -o "$APP/Contents/Resources/Clara.icns"
 fi
-cp .build/release/Clara "$APP/Contents/MacOS/Clara.new"
+BIN=$(swift build -c release --show-bin-path --cache-path "$PWD/.build/cache" --disable-sandbox)
+cp "$BIN/Clara" "$APP/Contents/MacOS/Clara.new"
 mv -f "$APP/Contents/MacOS/Clara.new" "$APP/Contents/MacOS/Clara"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

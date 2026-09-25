@@ -11,6 +11,7 @@ struct FloatingWorkspace: View {
     var body: some View {
         GeometryReader { geometry in
             let size = geometry.size
+            let terminalBounds = TerminalLayout(size: size, placement: store.terminalPlacement).terminal
             let inset = WorkspaceLayout.panelInset
             let panelHeight = max(200, size.height - inset - WorkspaceLayout.bottomClearance)
             let dockedFiles = store.projectDocuments.filter(\.minimized)
@@ -80,7 +81,7 @@ struct FloatingWorkspace: View {
                     }
                     .frame(width: width, height: height)
                     .clipShape(RoundedRectangle(cornerRadius: !expanded && collapsedDock ? 8 : Palette.cornerRadius, style: .continuous))
-                    .floatingGlass(enabled: expanded || !collapsedDock)
+                    .floatingGlass(enabled: expanded || !collapsedDock, tinted: expanded)
                     .dockCloseControl(enabled: !expanded, radius: collapsedDock ? 8 : Palette.cornerRadius, label: "Close " + document.url.lastPathComponent) { store.closeFile(document.id) }
                     .offset(x: expanded ? editorX : dockX, y: expanded ? inset : inset + dockHeader + CGFloat(index - filePage) * itemStride)
                     .opacity(visible && !store.showTerminal && !store.showBrowser ? 1 : 0).allowsHitTesting(visible && !store.showTerminal && !store.showBrowser).accessibilityHidden(!visible || store.showTerminal || store.showBrowser)
@@ -100,7 +101,7 @@ struct FloatingWorkspace: View {
                     let tabWidth = min(146.0, max(90.0, (size.width - 132) / CGFloat(max(1, store.projectSessions.count)) - 8))
                     ZStack {
                         TerminalPanel(session: session)
-                            .frame(width: size.width - 28, height: panelHeight)
+                            .frame(width: terminalBounds.width, height: terminalBounds.height)
                             .scaleEffect(expanded ? 1 : 0.08, anchor: .bottomLeading)
                             .opacity(expanded ? 1 : 0)
                             .allowsHitTesting(expanded).accessibilityHidden(!expanded)
@@ -116,16 +117,16 @@ struct FloatingWorkspace: View {
                                 .help("Restore " + session.title)
                         }
                     }
-                    .frame(width: expanded ? size.width - 28 : tabWidth, height: expanded ? panelHeight : dockButtonSize)
+                    .frame(width: expanded ? terminalBounds.width : tabWidth, height: expanded ? terminalBounds.height : dockButtonSize)
                     .contentShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
                     .clipShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
-                    .floatingGlass()
+                    .floatingGlass(tinted: expanded)
                     .dockCloseControl(enabled: !expanded, label: "Close " + session.title) { store.closeTerminal(session) }
                     .contextMenu { Button("Rename terminal…") { session.rename() } }
                     .onAppear { session.isPresented = expanded }
                     .onDisappear { session.isPresented = false }
                     .onChange(of: expanded) { _, value in session.isPresented = value }
-                    .offset(x: expanded ? inset : inset + 46 + CGFloat(index) * (tabWidth + 8), y: expanded ? inset : size.height - 48)
+                    .offset(x: expanded ? terminalBounds.minX : inset + 46 + CGFloat(index) * (tabWidth + 8), y: expanded ? terminalBounds.minY : size.height - 48)
                     .zIndex(expanded ? 10 : 6)
                     .transition(.scale(scale: 0.9, anchor: .bottomLeading).combined(with: .opacity))
                 }
@@ -151,6 +152,7 @@ struct FloatingWorkspace: View {
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .animation(motion, value: store.showEditor)
             .animation(motion, value: store.showTerminal)
+            .animation(motion, value: store.terminalPlacement)
             .animation(motion, value: store.showBrowser)
             .animation(motion, value: store.selectedTerminal)
             .animation(motion, value: store.projectDocuments.map { "\($0.id)-\($0.minimized)" })
@@ -164,21 +166,45 @@ struct FloatingWorkspace: View {
 struct TerminalPanel: View {
     @EnvironmentObject var store: AppStore
     @ObservedObject var session: TerminalSession
+    @State private var snapPreview: TerminalPlacement?
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 9) {
-                Image(systemName: "terminal").foregroundStyle(Palette.icon)
-                Text(session.title).font(.system(size: 12, weight: .medium))
-                    .onTapGesture(count: 2) { session.rename() }
-                TerminalActivityDot(activity: session.activity)
-                Text("zsh").font(.system(size: 10)).foregroundStyle(Palette.muted)
-                Spacer()
+                HStack(spacing: 9) {
+                    Image(systemName: "terminal").foregroundStyle(Palette.icon)
+                    Text(session.title).font(.system(size: 12, weight: .medium))
+                        .onTapGesture(count: 2) { session.rename() }
+                    TerminalActivityDot(activity: session.activity)
+                    Spacer(minLength: 0)
+                    if let snapPreview {
+                        Text(snapPreview == .bottom ? "Bottom half" : snapPreview == .right ? "Right half" : "Full workspace")
+                            .font(.system(size: 10)).foregroundStyle(Palette.icon)
+                    }
+                }
+                .frame(maxWidth: .infinity).frame(height: 48).contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 8, coordinateSpace: .global)
+                    .onChanged { value in
+                        snapPreview = TerminalPlacement.destination(for: value.translation, current: store.terminalPlacement)
+                    }
+                    .onEnded { value in
+                        store.terminalPlacement = TerminalPlacement.destination(for: value.translation, current: store.terminalPlacement)
+                        snapPreview = nil
+                    })
+                .help("Drag down for bottom half, right for right half, or up/left to expand")
+                Menu {
+                    Button("Full workspace") { store.terminalPlacement = .full }
+                    Button("Bottom half") { store.terminalPlacement = .bottom }
+                    Button("Right half") { store.terminalPlacement = .right }
+                } label: {
+                    Image(systemName: "rectangle.split.2x2").foregroundStyle(Palette.icon).frame(width: 24, height: 28)
+                }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Terminal layout")
                 IconButton(icon: "plus", help: "New terminal", action: store.addTerminal)
                 IconButton(icon: "minus", help: "Minimize terminal") { store.showTerminal = false }
                 IconButton(icon: "xmark", help: "Close terminal") { store.closeTerminal(session) }
-            }.padding(.horizontal, 16).frame(height: 48)
-            TerminalHost(session: session, isActive: store.showTerminal && store.selectedTerminal == session.id).padding(10).background(Color(white: 0.035))
-                .clipShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous)).padding([.horizontal, .bottom], 8)
+            }.padding(.horizontal, 16)
+            TerminalHost(session: session, isActive: store.showTerminal && store.selectedTerminal == session.id)
+                .padding(.horizontal, 16).padding(.bottom, 14)
+
         }
     }
 }

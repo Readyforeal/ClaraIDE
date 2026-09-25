@@ -26,13 +26,13 @@ struct CodeEditor: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
-        scroll.autohidesScrollers = true; scroll.borderType = .noBorder
+        scroll.autohidesScrollers = true; scroll.borderType = .noBorder; scroll.drawsBackground = false
         let view = NSTextView(frame: .zero)
         view.focusRingType = .none; scroll.focusRingType = .none
         view.isRichText = false; view.isEditable = editable; view.isSelectable = true; view.allowsUndo = true
         view.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         view.textColor = NSColor(calibratedWhite: 0.85, alpha: 1)
-        view.backgroundColor = NSColor(calibratedWhite: 0.045, alpha: 1)
+        view.backgroundColor = .clear; view.drawsBackground = false
         view.insertionPointColor = NSColor.systemBlue
         view.textContainerInset = NSSize(width: 16, height: 16)
         view.isAutomaticQuoteSubstitutionEnabled = false; view.isAutomaticDashSubstitutionEnabled = false

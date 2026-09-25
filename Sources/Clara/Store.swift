@@ -23,7 +23,8 @@ struct ProposedEdit: Identifiable {
         projectID = project.id; title = "Terminal \(number)"
         view = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 320))
         view.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        view.nativeBackgroundColor = NSColor(calibratedWhite: 0.035, alpha: 1)
+        view.nativeBackgroundColor = .clear
+        view.layer?.backgroundColor = NSColor.clear.cgColor
         view.nativeForegroundColor = NSColor(calibratedWhite: 0.84, alpha: 1)
         var environment = ProcessInfo.processInfo.environment
         environment["TERM"] = "xterm-256color"
@@ -147,6 +148,11 @@ struct EditorDocument: Identifiable {
         didSet { if showTerminal { showBrowser = false }; if !showTerminal { sessions.first(where: { $0.id == selectedTerminal })?.view.window?.makeFirstResponder(nil) } }
     }
     @Published var sessions: [TerminalSession] = []
+    @Published private var terminalPlacements: [UUID: TerminalPlacement] = [:]
+    var terminalPlacement: TerminalPlacement {
+        get { selectedTerminal.flatMap { terminalPlacements[$0] } ?? .full }
+        set { if let selectedTerminal { terminalPlacements[selectedTerminal] = newValue } }
+    }
     @Published var selectedTerminal: UUID?
     @Published var documents: [EditorDocument] = []
     @Published var selectedFileID: UUID?
@@ -306,6 +312,7 @@ struct EditorDocument: Identifiable {
             showTerminal = false
             selectedTerminal = nil
         }
+        terminalPlacements.removeValue(forKey: session.id)
         session.stop(); sessions.removeAll { $0.id == session.id }
         if projectSessions.isEmpty { showTerminal = false }
     }

@@ -82,3 +82,11 @@ Enable the globe icon in the chat composer to give the selected model browser to
 ## Distribution and updates
 
 See [release instructions](docs/RELEASING.md) for Developer ID signing, notarized DMGs, and GitHub releases. Clara → **Check for Updates…** checks published releases and opens the new installer; it does not pull or execute source changes. Current builds require Apple silicon and macOS 27+.
+
+## Terminal snapping and chat input
+
+New terminals open across the workspace. Drag the terminal title bar down at least 48 points to snap to the bottom half, or right to snap to the right half. Chat resizes into the space above or beside it. Drag up or left to return to full workspace, or use the terminal's layout menu. Each terminal remembers its position while minimized during the app session; terminals remain live when docked. One terminal is expanded at a time.
+
+Terminal and editor content now share a continuous dark-tinted Liquid Glass surface with their controls, without an opaque inner panel. Programs that explicitly paint terminal background colors can still use those colors.
+
+In the composer, **Enter** sends, **Shift+Enter** inserts a new line, and **Command+Enter** also sends. Sending does not require leaving the input first. Text composition through an input method is allowed to finish before Enter sends a message.

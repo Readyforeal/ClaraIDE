@@ -31,3 +31,45 @@ struct WorkspaceLayout {
         editorWidth = max(240, rightEdge - editorX)
     }
 }
+
+/// A terminal's snap position is retained while its session is docked.
+enum TerminalPlacement: String, CaseIterable {
+    case full, bottom, right
+
+    static func destination(for translation: CGSize, current: Self) -> Self {
+        guard max(abs(translation.width), abs(translation.height)) >= 48 else { return current }
+        if abs(translation.width) > abs(translation.height) {
+            return translation.width > 0 ? .right : .full
+        }
+        return translation.height > 0 ? .bottom : .full
+    }
+}
+
+struct TerminalLayout {
+    let terminal: CGRect
+    let chat: CGRect
+    let chatBottomPadding: CGFloat
+
+    init(size: CGSize, placement: TerminalPlacement) {
+        let inset = WorkspaceLayout.panelInset
+        let gap = WorkspaceLayout.panelGap
+        let width = max(0, size.width - 2 * inset)
+        let height = max(0, size.height - inset - WorkspaceLayout.bottomClearance)
+        switch placement {
+        case .full:
+            terminal = CGRect(x: inset, y: inset, width: width, height: height)
+            chat = CGRect(origin: .zero, size: size)
+            chatBottomPadding = WorkspaceLayout.bottomClearance
+        case .bottom:
+            let half = max(0, (height - gap) / 2)
+            terminal = CGRect(x: inset, y: inset + half + gap, width: width, height: half)
+            chat = CGRect(x: 0, y: 0, width: size.width, height: inset + half)
+            chatBottomPadding = 0
+        case .right:
+            let half = max(0, (width - gap) / 2)
+            terminal = CGRect(x: inset + half + gap, y: inset, width: half, height: height)
+            chat = CGRect(x: 0, y: 0, width: inset + half, height: size.height)
+            chatBottomPadding = WorkspaceLayout.bottomClearance
+        }
+    }
+}

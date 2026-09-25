@@ -3,7 +3,9 @@ import SwiftUI
 struct WorkspaceView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var compactChat: Bool { store.expandedDocument != nil }
+    private var splitTerminal: Bool { store.showTerminal && store.terminalPlacement != .full }
+    private var shortChat: Bool { store.showTerminal && store.terminalPlacement == .bottom }
+    private var compactChat: Bool { store.expandedDocument != nil || splitTerminal }
     @State private var review: ProposedEdit?
     @State private var gitBranch: String?
     var body: some View {
@@ -17,10 +19,12 @@ struct WorkspaceView: View {
                     IssuesView()
                 } else {
                 GeometryReader { geometry in
-                    let layout = WorkspaceLayout(width: geometry.size.width, navigatorOpen: store.showEditor, editorOpen: compactChat, hasDockedFiles: store.projectDocuments.contains(where: \.minimized))
-                    ZStack(alignment: .leading) {
-                        chatView.padding(.bottom, WorkspaceLayout.bottomClearance)
-                            .frame(width: layout.chatWidth, height: geometry.size.height)
+                    let layout = WorkspaceLayout(width: geometry.size.width, navigatorOpen: store.showEditor, editorOpen: store.expandedDocument != nil, hasDockedFiles: store.projectDocuments.contains(where: \.minimized))
+                    let terminalLayout = TerminalLayout(size: geometry.size, placement: store.terminalPlacement)
+                    ZStack(alignment: .topLeading) {
+                        chatView.padding(.bottom, splitTerminal ? terminalLayout.chatBottomPadding : WorkspaceLayout.bottomClearance)
+                            .frame(width: splitTerminal ? terminalLayout.chat.width : layout.chatWidth,
+                                   height: splitTerminal ? terminalLayout.chat.height : geometry.size.height)
                         FloatingWorkspace()
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -34,6 +38,8 @@ struct WorkspaceView: View {
         }
         .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.86), value: store.sidebarCollapsed)
         .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.86), value: store.showEditor)
+        .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.86), value: store.terminalPlacement)
+        .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.86), value: store.showTerminal)
         .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.86), value: store.projectDocuments.map { "\($0.id)-\($0.minimized)" })
         .background(Palette.background)
         .foregroundStyle(Color(white: 0.87))
@@ -133,7 +139,11 @@ struct WorkspaceView: View {
     }
     private var chatView: some View {
         VStack(spacing: 0) {
-            if store.chat?.messages.isEmpty != false {
+            if shortChat && store.chat?.messages.isEmpty != false {
+                Spacer(minLength: 8)
+                Text("What are we building?").font(.system(size: 22, weight: .medium))
+                Spacer(minLength: 8)
+            } else if store.chat?.messages.isEmpty != false {
                 Spacer()
                 VStack(alignment: .leading, spacing: 20) {
                     HStack(spacing: 7) { Image(systemName: "sparkle").foregroundStyle(Palette.icon); Text("A LITTLE SPACE TO BUILD").tracking(2) }.font(.system(size: 9, weight: .medium)).foregroundStyle(Palette.icon)
@@ -177,7 +187,7 @@ struct WorkspaceView: View {
             }
             composer.frame(maxWidth: 740)
                 .padding(.leading, compactChat ? WorkspaceLayout.panelInset : 32)
-                .padding(.trailing, compactChat ? 0 : 32)
+                .padding(.trailing, shortChat ? WorkspaceLayout.panelInset : compactChat ? 0 : 32)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private func suggestion(_ title: String, icon: String, prompt: String) -> some View {
@@ -205,9 +215,10 @@ struct WorkspaceView: View {
             if store.attachedFile != nil {
                 HStack { Label(store.fileURL?.lastPathComponent ?? "File", systemImage: "doc.text"); IconButton(icon: "xmark", help: "Remove file context") { store.attachedFile = nil } }.font(.system(size: 10)).foregroundStyle(Palette.icon)
             }
-            TextField("Ask anything, or describe what you'd like to build…", text: $store.draft, axis: .vertical)
-                .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(3...8).padding(.top, 3)
-                .disabled(store.chat == nil)
+            ChatInput(text: $store.draft, enabled: store.chat != nil) { value in
+                store.draft = value
+                if store.runningChat == nil { store.send() }
+            }.padding(.top, 3)
             HStack(spacing: compactChat ? 4 : 6) {
                 IconButton(icon: "plus", help: "Attach open editor file") { store.attachedFile = store.fileText }.disabled(store.fileURL == nil)
                 Button { store.allowTools.toggle() } label: {
