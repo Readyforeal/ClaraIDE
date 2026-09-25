@@ -1,0 +1,216 @@
+import SwiftUI
+
+/// One coordinate space for panels and their dock destinations. The native editor
+/// and terminal views stay mounted while their glass containers resize and move.
+struct FloatingWorkspace: View {
+    @EnvironmentObject var store: AppStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var filePage = 0
+    private let dockButtonSize: CGFloat = 38
+    private var motion: Animation? { reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.86) }
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let inset = WorkspaceLayout.panelInset
+            let panelHeight = max(200, size.height - inset - WorkspaceLayout.bottomClearance)
+            let dockedFiles = store.projectDocuments.filter(\.minimized)
+            let layout = WorkspaceLayout(width: size.width, navigatorOpen: store.showEditor, editorOpen: store.expandedDocument != nil, hasDockedFiles: !dockedFiles.isEmpty)
+            let navWidth = layout.navigatorWidth
+            let navX = layout.navigatorX
+            let dockX = layout.dockX
+            let editorX = layout.editorX
+            let editorWidth = layout.editorWidth
+            let collapsedDock = !store.showEditor
+            let itemSize = WorkspaceLayout.dockItemSize
+            let dockPadding = WorkspaceLayout.dockPadding
+            let itemStride: CGFloat = itemSize + (collapsedDock ? dockPadding : 12)
+            let dockHeader: CGFloat = collapsedDock ? itemSize + 3 * dockPadding + 1 : 0
+            let slots = max(1, Int((panelHeight - dockHeader - 44) / itemStride))
+            // Equal outer padding, item gaps, and spacing around the divider.
+            let dockHeight = dockedFiles.isEmpty ? WorkspaceLayout.dockWidth : dockHeader + CGFloat(min(slots, dockedFiles.count)) * itemStride + (dockedFiles.count > slots ? 36 : 0)
+            ZStack(alignment: .topLeading) {
+                // A standalone navigator, never joined to the editor surface.
+                ZStack(alignment: .top) {
+                    if store.showEditor {
+                        FileNavigator().frame(width: navWidth, height: panelHeight)
+                    } else {
+                        VStack(spacing: dockPadding) {
+                            Button { store.showEditor = true } label: { Image(systemName: "folder").font(.system(size: 18)).frame(width: itemSize, height: itemSize) }
+                                .buttonStyle(DockButtonStyle(radius: 8)).foregroundStyle(Palette.icon).help("Open file navigator")
+                                .accessibilityLabel("Open file navigator")
+                                .disabled(store.project == nil)
+                            if !dockedFiles.isEmpty { Rectangle().fill(.white.opacity(0.13)).frame(width: 28, height: 1) }
+                        }.padding(.top, dockPadding).frame(width: navWidth, height: dockHeight, alignment: .top)
+                    }
+                }
+                .frame(width: navWidth, height: store.showEditor ? panelHeight : dockHeight)
+                .clipShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
+                .floatingGlass()
+                .offset(x: navX, y: inset)
+                .opacity((store.showTerminal || store.showBrowser) ? 0 : 1)
+                .allowsHitTesting(!store.showTerminal && !store.showBrowser).accessibilityHidden(store.showTerminal || store.showBrowser)
+                .zIndex(3)
+
+                ForEach(store.projectDocuments) { document in
+                    let index = dockedFiles.firstIndex(where: { $0.id == document.id }) ?? 0
+                    let expanded = !document.minimized
+                    let visible = expanded || (index >= filePage && index < filePage + slots)
+                    let width: CGFloat = expanded ? editorWidth : itemSize
+                    let height: CGFloat = expanded ? panelHeight : itemSize
+                    ZStack {
+                        FileEditorPanel(documentID: document.id)
+                            .frame(width: editorWidth, height: panelHeight)
+                            .scaleEffect(expanded ? 1 : 0.08)
+                            .opacity(expanded ? 1 : 0)
+                            .allowsHitTesting(expanded).accessibilityHidden(!expanded)
+                        if !expanded {
+                            Button { store.restoreFile(document.id) } label: {
+                                VStack(spacing: 3) {
+                                    Image(systemName: "doc.text").font(.system(size: 16))
+                                    Text(document.url.pathExtension.isEmpty ? "FILE" : String(document.url.pathExtension.uppercased().prefix(5))).font(.system(size: 7, weight: .semibold))
+                                }.frame(width: itemSize, height: itemSize)
+                                    .contentShape(RoundedRectangle(cornerRadius: collapsedDock ? 8 : Palette.cornerRadius))
+                                    .background(document.dirty ? Color.red.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: collapsedDock ? 8 : Palette.cornerRadius))
+                                    .overlay(RoundedRectangle(cornerRadius: collapsedDock ? 8 : Palette.cornerRadius).strokeBorder(document.dirty ? Color.red.opacity(0.5) : .clear, lineWidth: 1).allowsHitTesting(false))
+                            }.buttonStyle(.plain).pointerStyle(.default).focusEffectDisabled().foregroundStyle(Palette.icon)
+                                .help(document.url.lastPathComponent + (document.dirty ? " · Unsaved changes" : ""))
+                                .accessibilityLabel("Restore " + document.url.lastPathComponent)
+                                .contextMenu { Button("Close file") { store.closeFile(document.id) } }
+                        }
+                    }
+                    .frame(width: width, height: height)
+                    .clipShape(RoundedRectangle(cornerRadius: !expanded && collapsedDock ? 8 : Palette.cornerRadius, style: .continuous))
+                    .floatingGlass(enabled: expanded || !collapsedDock)
+                    .dockCloseControl(enabled: !expanded, radius: collapsedDock ? 8 : Palette.cornerRadius, label: "Close " + document.url.lastPathComponent) { store.closeFile(document.id) }
+                    .offset(x: expanded ? editorX : dockX, y: expanded ? inset : inset + dockHeader + CGFloat(index - filePage) * itemStride)
+                    .opacity(visible && !store.showTerminal && !store.showBrowser ? 1 : 0).allowsHitTesting(visible && !store.showTerminal && !store.showBrowser).accessibilityHidden(!visible || store.showTerminal || store.showBrowser)
+                    .zIndex(expanded ? 2 : 4)
+                    .transition(.asymmetric(insertion: .scale(scale: 0.94).combined(with: .opacity), removal: .scale(scale: 0.94, anchor: .trailing).combined(with: .opacity)))
+                }
+                if dockedFiles.count > slots {
+                    HStack(spacing: 0) {
+                        DockIconButton(icon: "chevron.up", help: "Previous docked files", width: collapsedDock ? itemSize / 2 : 24, height: 28, radius: collapsedDock ? 8 : Palette.cornerRadius) { filePage = max(0, filePage - slots) }.disabled(filePage == 0)
+                        DockIconButton(icon: "chevron.down", help: "Next docked files", width: collapsedDock ? itemSize / 2 : 24, height: 28, radius: collapsedDock ? 8 : Palette.cornerRadius) { filePage = min(max(0, dockedFiles.count - slots), filePage + slots) }.disabled(filePage + slots >= dockedFiles.count)
+                    }.floatingGlass(enabled: !collapsedDock).offset(x: collapsedDock ? dockX : dockX - 3, y: collapsedDock ? inset + dockHeight - 36 : panelHeight - 24)
+                        .opacity((store.showTerminal || store.showBrowser) ? 0 : 1).allowsHitTesting(!store.showTerminal && !store.showBrowser).accessibilityHidden(store.showTerminal || store.showBrowser).zIndex(5)
+                }
+
+                ForEach(Array(store.projectSessions.enumerated()), id: \.element.id) { index, session in
+                    let expanded = store.showTerminal && store.selectedTerminal == session.id
+                    let tabWidth = min(146.0, max(90.0, (size.width - 132) / CGFloat(max(1, store.projectSessions.count)) - 8))
+                    ZStack {
+                        TerminalPanel(session: session)
+                            .frame(width: size.width - 28, height: panelHeight)
+                            .scaleEffect(expanded ? 1 : 0.08, anchor: .bottomLeading)
+                            .opacity(expanded ? 1 : 0)
+                            .allowsHitTesting(expanded).accessibilityHidden(!expanded)
+                        if !expanded {
+                            Button {
+                                session.activity.acknowledge()
+                                store.selectedTerminal = session.id; store.showTerminal = true
+                            } label: {
+                                TerminalTabLabel(session: session).padding(.horizontal, 12)
+                                    .frame(width: tabWidth, height: dockButtonSize)
+                                    .contentShape(RoundedRectangle(cornerRadius: Palette.cornerRadius))
+                            }.buttonStyle(.plain).pointerStyle(.default).focusEffectDisabled()
+                                .help("Restore " + session.title)
+                        }
+                    }
+                    .frame(width: expanded ? size.width - 28 : tabWidth, height: expanded ? panelHeight : dockButtonSize)
+                    .contentShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
+                    .floatingGlass()
+                    .dockCloseControl(enabled: !expanded, label: "Close " + session.title) { store.closeTerminal(session) }
+                    .contextMenu { Button("Rename terminal…") { session.rename() } }
+                    .onAppear { session.isPresented = expanded }
+                    .onDisappear { session.isPresented = false }
+                    .onChange(of: expanded) { _, value in session.isPresented = value }
+                    .offset(x: expanded ? inset : inset + 46 + CGFloat(index) * (tabWidth + 8), y: expanded ? inset : size.height - 48)
+                    .zIndex(expanded ? 10 : 6)
+                    .transition(.scale(scale: 0.9, anchor: .bottomLeading).combined(with: .opacity))
+                }
+                if let browser = store.browser {
+                    ZStack {
+                        BrowserPanel(session: browser).frame(width: size.width - 28, height: panelHeight)
+                            .scaleEffect(store.showBrowser ? 1 : 0.08, anchor: .bottomTrailing)
+                            .opacity(store.showBrowser ? 1 : 0).allowsHitTesting(store.showBrowser).accessibilityHidden(!store.showBrowser)
+                        if !store.showBrowser {
+                            DockIconButton(icon: "globe", help: "Open browser", width: dockButtonSize, height: dockButtonSize) { store.openBrowser() }
+                        }
+                    }.frame(width: store.showBrowser ? size.width - 28 : dockButtonSize, height: store.showBrowser ? panelHeight : dockButtonSize)
+                        .contentShape(RoundedRectangle(cornerRadius: Palette.cornerRadius))
+                        .clipShape(RoundedRectangle(cornerRadius: Palette.cornerRadius)).floatingGlass()
+                        .offset(x: store.showBrowser ? inset : size.width - inset - dockButtonSize, y: store.showBrowser ? inset : size.height - 48)
+                        .zIndex(store.showBrowser ? 12 : 7)
+                }
+                DockIconButton(icon: "plus", help: "New terminal", width: dockButtonSize, height: dockButtonSize) { store.addTerminal() }
+                    .frame(width: dockButtonSize, height: dockButtonSize).floatingGlass()
+                    .offset(x: inset, y: size.height - 48)
+                    .disabled(store.project == nil).zIndex(11)
+            }
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .animation(motion, value: store.showEditor)
+            .animation(motion, value: store.showTerminal)
+            .animation(motion, value: store.showBrowser)
+            .animation(motion, value: store.selectedTerminal)
+            .animation(motion, value: store.projectDocuments.map { "\($0.id)-\($0.minimized)" })
+            .animation(motion, value: store.projectSessions.map(\.id))
+            .animation(motion, value: filePage)
+            .onChange(of: store.workspace.selectedProject) { _, _ in filePage = 0 }
+            .onChange(of: dockedFiles.count) { _, count in filePage = min(filePage, max(0, count - slots)) }
+        }
+    }
+}
+struct TerminalPanel: View {
+    @EnvironmentObject var store: AppStore
+    @ObservedObject var session: TerminalSession
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 9) {
+                Image(systemName: "terminal").foregroundStyle(Palette.icon)
+                Text(session.title).font(.system(size: 12, weight: .medium))
+                    .onTapGesture(count: 2) { session.rename() }
+                TerminalActivityDot(activity: session.activity)
+                Text("zsh").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                Spacer()
+                IconButton(icon: "plus", help: "New terminal", action: store.addTerminal)
+                IconButton(icon: "minus", help: "Minimize terminal") { store.showTerminal = false }
+                IconButton(icon: "xmark", help: "Close terminal") { store.closeTerminal(session) }
+            }.padding(.horizontal, 16).frame(height: 48)
+            TerminalHost(session: session, isActive: store.showTerminal && store.selectedTerminal == session.id).padding(10).background(Color(white: 0.035))
+                .clipShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous)).padding([.horizontal, .bottom], 8)
+        }
+    }
+}
+
+private struct TerminalTabLabel: View {
+    @ObservedObject var session: TerminalSession
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "terminal").foregroundStyle(Palette.icon)
+            TerminalActivityDot(activity: session.activity)
+            Text(session.title).lineLimit(1).font(.system(size: 10, weight: .medium))
+        }
+    }
+}
+private struct TerminalActivityDot: View {
+    let activity: TerminalActivity
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        Group {
+            if activity.running || activity.completed {
+                Circle().fill(.green).frame(width: 6, height: 6)
+                    .overlay {
+                        if activity.completed && !reduceMotion {
+                            Circle().stroke(.green.opacity(0.7), lineWidth: 1)
+                                .phaseAnimator([false, true]) { ring, expanded in
+                                    ring.scaleEffect(expanded ? 2.8 : 1).opacity(expanded ? 0 : 1)
+                                } animation: { _ in .easeOut(duration: 1.1) }
+                        }
+                    }
+                    .accessibilityLabel(activity.running ? "Command running" : "Command finished")
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }.animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: activity)
+    }
+}
