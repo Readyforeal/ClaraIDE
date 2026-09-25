@@ -31,19 +31,35 @@ final class PeekPanel: NSPanel {
     override func cancelOperation(_ sender: Any?) { escape?() }
 }
 
+/// Concave shoulders meet the bezel; the lower corners remain convex.
+func peekOutline(in rect: CGRect, shoulder: CGFloat = 16) -> CGPath {
+    let w = rect.width, h = rect.height
+    let wing = min(shoulder, w / 8, h / 4), r = min(22, h / 3)
+    let p = CGMutablePath()
+    p.move(to: CGPoint(x: 0, y: h))
+    p.addLine(to: CGPoint(x: w, y: h))
+    p.addCurve(to: CGPoint(x: w - wing, y: h - wing), control1: CGPoint(x: w - wing * 0.5523, y: h), control2: CGPoint(x: w - wing, y: h - wing * 0.4477))
+    p.addLine(to: CGPoint(x: w - wing, y: r))
+    p.addQuadCurve(to: CGPoint(x: w - wing - r, y: 0), control: CGPoint(x: w - wing, y: 0))
+    p.addLine(to: CGPoint(x: wing + r, y: 0))
+    p.addQuadCurve(to: CGPoint(x: wing, y: r), control: CGPoint(x: wing, y: 0))
+    p.addLine(to: CGPoint(x: wing, y: h - wing))
+    p.addCurve(to: CGPoint(x: 0, y: h), control1: CGPoint(x: wing, y: h - wing * 0.4477), control2: CGPoint(x: wing * 0.5523, y: h))
+    p.closeSubpath()
+    return p
+}
+
 final class PeekSurface: NSView {
-    var entered: (() -> Void)?
-    var exited: (() -> Void)?
     var clicked: (() -> Void)?
-    private var tracking: NSTrackingArea?
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
-        addTrackingArea(area); tracking = area
+    private let outline = CAShapeLayer()
+    override func layout() {
+        super.layout()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        outline.frame = bounds
+        outline.path = peekOutline(in: bounds, shoulder: bounds.height > 60 ? 16 : 0)
+        layer?.mask = outline
+        CATransaction.commit()
     }
-    override func mouseEntered(with event: NSEvent) { entered?() }
-    override func mouseExited(with event: NSEvent) { exited?() }
     override func mouseDown(with event: NSEvent) { clicked?() }
 }
 
@@ -53,6 +69,7 @@ final class PeekSurface: NSView {
     @Published var terminalMode = false
     @Published private(set) var terminals: [UUID: TerminalSession] = [:]
     @Published private(set) var topInset: CGFloat = 32
+    @Published private(set) var notchWidth: CGFloat = 212
     @Published private(set) var width: CGFloat = 620
     @Published private(set) var height: CGFloat = 520
     @Published var enabled: Bool {
@@ -88,16 +105,15 @@ final class PeekSurface: NSView {
         workspaceWindow = workspace
         let panel = PeekPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false
-        panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false; panel.isReleasedWhenClosed = false
         panel.isFloatingPanel = true; panel.becomesKeyOnlyIfNeeded = false
+        // Setting isFloatingPanel resets the level, so assign our level afterwards.
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         panel.appearance = NSAppearance(named: .darkAqua)
         panel.escape = { [weak self] in self?.collapse() }
         let surface = PeekSurface()
         surface.wantsLayer = true; surface.layer?.backgroundColor = NSColor.clear.cgColor
-        surface.layer?.cornerRadius = 20; surface.layer?.cornerCurve = .continuous
-        surface.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         surface.layer?.masksToBounds = true
         // The camera housing may not deliver NSView tracking events. Sample the
         // pointer's screen coordinates instead; no Accessibility permission needed.
@@ -166,6 +182,7 @@ final class PeekSurface: NSView {
     private func position() {
         guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 && $0.auxiliaryTopLeftArea != nil }) ?? NSScreen.main ?? NSScreen.screens.first else { return }
         let layout = NotchGeometry(screen: screen.frame, left: screen.auxiliaryTopLeftArea, right: screen.auxiliaryTopRightArea, safeTop: screen.safeAreaInsets.top)
+        notchWidth = screen.safeAreaInsets.top > 0 ? layout.collapsed.width : 0
         geometry = layout; topInset = layout.topInset; width = layout.expanded.width; height = layout.expanded.height
         panel?.setFrame(expanded ? layout.expanded : layout.collapsed, display: true)
         if enabled { panel?.orderFrontRegardless() }
@@ -270,8 +287,8 @@ private struct PeekShell: View {
                     .overlay(LinearGradient(stops: [
                         .init(color: .black, location: 0),
                         .init(color: .black, location: 0.15),
-                        .init(color: .black.opacity(0.88), location: 0.55),
-                        .init(color: .black.opacity(0.68), location: 1)
+                        .init(color: .black.opacity(0.65), location: 0.55),
+                        .init(color: .black.opacity(0.30), location: 1)
                     ], startPoint: .top, endPoint: .bottom))
                     .allowsHitTesting(false)
             } else { Color.black }
@@ -284,6 +301,7 @@ private struct PeekShell: View {
 private struct PeekContent: View {
     @ObservedObject var controller: NotchPeekController
     @EnvironmentObject var store: AppStore
+    @State private var revealed = false
     private var chats: [Conversation] { store.project?.chats ?? store.workspace.generalChats }
     var body: some View {
         ZStack(alignment: .top) {
@@ -299,7 +317,8 @@ private struct PeekContent: View {
                             Spacer()
                         }
                     }
-                }.padding(.horizontal, 18).padding(.bottom, 18).padding(.top, controller.topInset + 56)
+                }.padding(.horizontal, 34).padding(.bottom, 18).padding(.top, controller.topInset + 56)
+                    .modifier(PeekReveal(visible: revealed, delay: 0.10))
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -311,7 +330,7 @@ private struct PeekContent: View {
                             ForEach(Array((store.chat?.messages ?? []).suffix(30))) { message in MessageView(message: message).id(message.id) }
                             if let running = store.runningChat, running == store.chat?.id { Text(store.activity).font(.caption).foregroundStyle(Palette.muted) }
                             Color.clear.frame(height: 132).id("peek-bottom")
-                        }.padding(.horizontal, 22).padding(.top, controller.topInset + 64)
+                        }.padding(.horizontal, 38).padding(.top, controller.topInset + 64)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.78), .init(color: .clear, location: 0.97)], startPoint: .top, endPoint: .bottom))
@@ -319,19 +338,22 @@ private struct PeekContent: View {
                     .onChange(of: store.chat?.messages.last?.content) { _, _ in proxy.scrollTo("peek-bottom", anchor: .bottom) }
                     .onChange(of: store.chat?.id) { _, _ in proxy.scrollTo("peek-bottom", anchor: .bottom) }
                 }
+                .modifier(PeekReveal(visible: revealed, delay: 0.10))
                 VStack(spacing: 8) {
                     Spacer(minLength: 0)
                     if let error = store.error { Text(error).font(.caption).foregroundStyle(.red).lineLimit(2) }
                     composer
-                }.padding(.horizontal, 18).padding(.bottom, 18)
+                }.padding(.horizontal, 34).padding(.bottom, 18)
+                    .modifier(PeekReveal(visible: revealed, delay: 0.18))
             }
             header
-                .padding(.horizontal, 18).padding(.top, controller.topInset + 8).padding(.bottom, 24)
+                .padding(.horizontal, 34).padding(.bottom, 24)
                 .background(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.65), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
-        }
+        }.onAppear { revealed = true }
     }
     private var header: some View {
-            HStack(spacing: 8) {
+            VStack(spacing: 8) {
+            HStack(spacing: 0) {
                 Menu {
                     Button("General chats") {
                         if let chat = store.workspace.generalChats.first { store.selectChat(chat.id) } else { store.newChat() }
@@ -339,7 +361,8 @@ private struct PeekContent: View {
                     Divider()
                     ForEach(store.workspace.projects) { project in Button(project.name) { store.selectProject(project.id) } }
                 } label: { Label(store.project?.name ?? "General", systemImage: "folder").lineLimit(1) }
-                .menuStyle(.borderlessButton).tint(Palette.icon).foregroundStyle(Palette.icon).frame(maxWidth: 190)
+                .menuStyle(.borderlessButton).tint(Palette.icon).foregroundStyle(Palette.icon).frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 0).frame(width: controller.notchWidth)
                 Menu {
                     ForEach(chats) { chat in Button(chat.title) { store.selectChat(chat.id) } }
                     Divider()
@@ -347,14 +370,19 @@ private struct PeekContent: View {
                         if let project = store.project { store.newProjectChat(project.id) } else { store.newChat() }
                     }
                 } label: { Text(store.chat?.title ?? "New conversation").lineLimit(1) }
-                .menuStyle(.borderlessButton).tint(Palette.icon).foregroundStyle(Palette.icon).frame(maxWidth: .infinity)
+                .menuStyle(.borderlessButton).tint(Palette.icon).foregroundStyle(Palette.icon).frame(maxWidth: .infinity, alignment: .trailing)
+            }.frame(height: controller.topInset)
+                .modifier(PeekReveal(visible: revealed, delay: 0))
+            HStack(spacing: 8) {
+                Spacer()
                 IconButton(icon: controller.terminalMode ? "text.bubble" : "terminal", help: controller.terminalMode ? "Show chat" : "Quick terminal") {
                     if controller.terminalMode { controller.terminalMode = false } else { controller.quickTerminal() }
                 }.disabled(store.project == nil && !controller.terminalMode)
                 IconButton(icon: controller.pinned ? "pin.slash" : "pin", help: controller.pinned ? "Unpin" : "Pin open") { controller.pinned.toggle() }
                 IconButton(icon: "arrow.up.right.square", help: "Open in Clara") { controller.openWorkspace() }
                 IconButton(icon: "chevron.up", help: "Collapse") { controller.collapse() }
-            }.font(.system(size: 11))
+            }.modifier(PeekReveal(visible: revealed, delay: 0.05))
+        }.font(.system(size: 11))
     }
     private var composer: some View {
         VStack(spacing: 6) {
@@ -372,6 +400,16 @@ private struct PeekContent: View {
                         }
                     }
                 }.padding(12).floatingGlass(tinted: true, radius: 16)
+    }
+}
+
+private struct PeekReveal: ViewModifier {
+    let visible: Bool
+    let delay: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func body(content: Content) -> some View {
+        content.opacity(visible ? 1 : 0)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.24).delay(delay), value: visible)
     }
 }
 

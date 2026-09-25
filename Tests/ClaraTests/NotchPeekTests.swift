@@ -16,6 +16,15 @@ final class NotchPeekTests: XCTestCase {
         XCTAssertTrue(screen.contains(layout.expanded))
         XCTAssertEqual(layout.topInset, 32)
     }
+    func testIslandShouldersFlareIntoBezelAndKeepInsetSides() {
+        let path = peekOutline(in: CGRect(x: 0, y: 0, width: 620, height: 520))
+        XCTAssertTrue(path.contains(CGPoint(x: 8, y: 519)))
+        XCTAssertFalse(path.contains(CGPoint(x: 8, y: 480)))
+        XCTAssertTrue(path.contains(CGPoint(x: 18, y: 480)))
+        XCTAssertTrue(path.contains(CGPoint(x: 612, y: 519)))
+        XCTAssertFalse(path.contains(CGPoint(x: 612, y: 480)))
+        XCTAssertTrue(path.contains(CGPoint(x: 310, y: 1)))
+    }
     @MainActor func testPanelCanOccupyMenuBarAndNotchArea() throws {
         let screen = try XCTUnwrap(NSScreen.main)
         let panel = PeekPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -109,10 +118,11 @@ final class NotchPeekTests: XCTestCase {
         XCTAssertFalse(peek.pinned)
         XCTAssertFalse(peek.panel?.isKeyWindow ?? true, "Hover expansion must not take keyboard focus")
         XCTAssertTrue(peek.store === store)
+        XCTAssertGreaterThan(try XCTUnwrap(peek.panel).level.rawValue, NSWindow.Level.statusBar.rawValue)
         if let view = peek.panel?.contentView, let output = ProcessInfo.processInfo.environment["CLARA_PEEK_RENDER"] {
             view.layoutSubtreeIfNeeded()
             // Let SwiftUI commit the newly mounted content before capturing its native view.
-            try await Task.sleep(for: .milliseconds(250))
+            try await Task.sleep(for: .milliseconds(500))
             view.displayIfNeeded()
             if let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                 view.cacheDisplay(in: view.bounds, to: bitmap)
