@@ -34,6 +34,37 @@ final class NotchPeekTests: XCTestCase {
         XCTAssertEqual(layout.collapsed.width, 38)
         XCTAssertTrue(screen.contains(layout.expanded))
     }
+    @MainActor func testHoverOpensWithoutWindowMouseEventsAndRespectsDismissal() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var pointer = NSPoint(x: -99999, y: -99999)
+        let peek = NotchPeekController(store: AppStore(stateURL: root.appendingPathComponent("workspace.json")), pointerLocation: { pointer })
+        peek.start(workspace: nil); peek.enabled = true
+        defer { peek.shutdown() }
+        let frame = try XCTUnwrap(peek.panel?.frame)
+        pointer = NSPoint(x: frame.midX, y: frame.midY)
+        // No mouseEntered event: the real timer must detect the pointer itself.
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertTrue(peek.expanded)
+        XCTAssertFalse(peek.panel?.isKeyWindow ?? true)
+        peek.collapse()
+        try await Task.sleep(for: .milliseconds(650))
+        XCTAssertFalse(peek.expanded, "Dismissal must not immediately reopen under a stationary pointer")
+        pointer = NSPoint(x: -99999, y: -99999)
+        try await Task.sleep(for: .milliseconds(200))
+        pointer = NSPoint(x: frame.midX, y: frame.midY)
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertTrue(peek.expanded)
+        pointer = NSPoint(x: -99999, y: -99999)
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertFalse(peek.expanded)
+        peek.enabled = false
+        pointer = NSPoint(x: frame.midX, y: frame.midY)
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertFalse(peek.expanded)
+    }
+
     @MainActor func testTemporaryTerminalsStaySeparateAndSurviveCollapse() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

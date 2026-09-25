@@ -58,13 +58,17 @@ final class PeekSurface: NSView {
     @Published var enabled: Bool {
         didSet {
             UserDefaults.standard.set(enabled, forKey: "claraNotchEnabled")
-            if enabled { position() } else { collapse(); panel?.orderOut(nil) }
+            if enabled { position(); startPointerTracking() } else { stopPointerTracking(); collapse(); panel?.orderOut(nil) }
         }
     }
     let store: AppStore
     weak var workspaceWindow: NSWindow?
     private(set) var panel: PeekPanel?
     private var geometry: NotchGeometry?
+    private var pointerTimer: Timer?
+    private var pointerInside = false
+    private var opening = false
+    private let pointerLocation: () -> NSPoint
     private var hoverTask: DispatchWorkItem?
     private var exitTask: DispatchWorkItem?
     private var transition = 0
@@ -73,8 +77,9 @@ final class PeekSurface: NSView {
     private var clickMonitor: Any?
     private var projectSubscription: AnyCancellable?
 
-    init(store: AppStore) {
+    init(store: AppStore, pointerLocation: @escaping () -> NSPoint = { NSEvent.mouseLocation }) {
         self.store = store
+        self.pointerLocation = pointerLocation
         enabled = UserDefaults.standard.object(forKey: "claraNotchEnabled") as? Bool ?? true
         super.init()
     }
@@ -94,8 +99,8 @@ final class PeekSurface: NSView {
         surface.layer?.cornerRadius = 20; surface.layer?.cornerCurve = .continuous
         surface.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         surface.layer?.masksToBounds = true
-        surface.entered = { [weak self] in self?.hoverEntered() }
-        surface.exited = { [weak self] in self?.hoverExited() }
+        // The camera housing may not deliver NSView tracking events. Sample the
+        // pointer's screen coordinates instead; no Accessibility permission needed.
         surface.clicked = { [weak self] in self?.engage() }
         let host = NSHostingView(rootView: PeekShell(controller: self))
         host.frame = surface.bounds; host.autoresizingMask = [.width, .height]
@@ -111,7 +116,7 @@ final class PeekSurface: NSView {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.menuTracking = false
-                if self.panel?.frame.contains(NSEvent.mouseLocation) == false { self.hoverExited() }
+                if !self.pointerInside { self.hoverExited() }
             }
         })
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
@@ -136,7 +141,27 @@ final class PeekSurface: NSView {
             guard let self else { return }
             for id in Array(self.terminals.keys) where !ids.contains(id) { self.terminals.removeValue(forKey: id)?.stop() }
         }
-        if enabled { position() }
+        if enabled { position(); startPointerTracking() }
+    }
+    private func startPointerTracking() {
+        guard panel != nil, pointerTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.samplePointer() }
+        }
+        timer.tolerance = 0.02
+        pointerTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+    private func stopPointerTracking() {
+        pointerTimer?.invalidate(); pointerTimer = nil; pointerInside = false
+    }
+    private func samplePointer() {
+        guard enabled, let geometry, panel?.isVisible == true else { return }
+        let region = expanded || opening ? geometry.expanded : geometry.collapsed
+        let inside = region.contains(pointerLocation())
+        guard inside != pointerInside else { return }
+        pointerInside = inside
+        if inside { hoverEntered() } else { hoverExited() }
     }
     private func position() {
         guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 && $0.auxiliaryTopLeftArea != nil }) ?? NSScreen.main ?? NSScreen.screens.first else { return }
@@ -147,7 +172,7 @@ final class PeekSurface: NSView {
     }
     func hoverEntered() {
         exitTask?.cancel()
-        guard !expanded else { return }
+        guard !expanded, !opening else { return }
         hoverTask?.cancel()
         let task = DispatchWorkItem { [weak self] in self?.expand() }
         hoverTask = task; DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: task)
@@ -161,7 +186,8 @@ final class PeekSurface: NSView {
     func expand() {
         guard enabled, let panel, let geometry else { return }
         hoverTask?.cancel(); exitTask?.cancel()
-        guard !expanded else { return }
+        guard !expanded, !opening else { return }
+        opening = true
         transition += 1; let token = transition
         // Animate only the black shell; mount the chat once it has room to lay out.
         NSAnimationContext.runAnimationGroup { context in
@@ -171,6 +197,7 @@ final class PeekSurface: NSView {
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.transition == token else { return }
+                self.opening = false
                 self.expanded = true
                 self.panel?.hasShadow = true
                 self.panel?.invalidateShadow()
@@ -180,7 +207,7 @@ final class PeekSurface: NSView {
     func engage() { exitTask?.cancel(); pinned = true; expand(); panel?.makeKey() }
     func collapse() {
         hoverTask?.cancel(); exitTask?.cancel(); transition += 1
-        expanded = false; pinned = false
+        expanded = false; opening = false; pinned = false
         panel?.hasShadow = false
         terminals.values.forEach { $0.isPresented = false }
         panel?.makeFirstResponder(nil); panel?.resignKey()
@@ -213,6 +240,7 @@ final class PeekSurface: NSView {
         if store.showSettings { openWorkspace() }
     }
     func shutdown() {
+        stopPointerTracking()
         hoverTask?.cancel(); exitTask?.cancel(); transition += 1
         terminals.values.forEach { $0.stop() }; terminals.removeAll()
         observers.forEach(NotificationCenter.default.removeObserver); observers.removeAll()
