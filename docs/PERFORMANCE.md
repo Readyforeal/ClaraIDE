@@ -1,5 +1,7 @@
 # Clara performance investigation — September 25, 2026
 
+This report measures version 0.4.3. Version 0.4.4 restores the single dark native backdrop by visual preference and extends it to the navigator and file dock; the measurements below do not establish performance for that later styling change.
+
 ## Method
 
 Test machine: Apple M4 MacBook Air, 16 GB RAM, macOS 27, Apple silicon release builds. Synthetic app window: 1380 × 880 points. The user's existing Clara process remained running; it was never terminated. Background system load and macOS timer coalescing introduce variation.

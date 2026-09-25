@@ -46,7 +46,7 @@ struct FloatingWorkspace: View {
                     }
                 }
                 .modifier(PanelShell(rect: CGRect(x: navX, y: inset, width: navWidth,
-                    height: store.showEditor ? panelHeight : dockHeight)))
+                    height: store.showEditor ? panelHeight : dockHeight), tinted: true))
                 .opacity((store.showTerminal || store.showBrowser) ? 0 : 1)
                 .allowsHitTesting(!store.showTerminal && !store.showBrowser).accessibilityHidden(store.showTerminal || store.showBrowser)
                 .zIndex(3)
@@ -94,7 +94,7 @@ struct FloatingWorkspace: View {
                     HStack(spacing: 0) {
                         DockIconButton(icon: "chevron.up", help: "Previous docked files", width: collapsedDock ? itemSize / 2 : 24, height: 28, radius: collapsedDock ? 8 : Palette.cornerRadius) { filePage = max(0, filePage - slots) }.disabled(filePage == 0)
                         DockIconButton(icon: "chevron.down", help: "Next docked files", width: collapsedDock ? itemSize / 2 : 24, height: 28, radius: collapsedDock ? 8 : Palette.cornerRadius) { filePage = min(max(0, dockedFiles.count - slots), filePage + slots) }.disabled(filePage + slots >= dockedFiles.count)
-                    }.floatingGlass(enabled: !collapsedDock).offset(x: collapsedDock ? dockX : dockX - 3, y: collapsedDock ? inset + dockHeight - 36 : panelHeight - 24)
+                    }.floatingGlass(enabled: !collapsedDock, tinted: true).offset(x: collapsedDock ? dockX : dockX - 3, y: collapsedDock ? inset + dockHeight - 36 : panelHeight - 24)
                         .opacity((store.showTerminal || store.showBrowser) ? 0 : 1).allowsHitTesting(!store.showTerminal && !store.showBrowser).accessibilityHidden(store.showTerminal || store.showBrowser).zIndex(5)
                 }
 

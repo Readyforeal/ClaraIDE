@@ -91,7 +91,7 @@ Terminal and editor content now share a continuous dark-tinted Liquid Glass surf
 
 In the composer, **Enter** sends, **Shift+Enter** inserts a new line, and **Command+Enter** also sends. Sending does not require leaving the input first. Text composition through an input method is allowed to finish before Enter sends a message.
 
-Terminal and editor slabs use translucent, dark-tinted glass with in-window backdrop blur. A full-workspace terminal also blurs the underlying chat. The composer floats above the message scroll view, uses an 800-point maximum width beside the 740-point message lane, and masks message content to transparent at its bottom edge. Scroll padding tracks composer height so the latest message can still be read above it.
+Terminal and editor slabs use translucent, dark-tinted glass with in-window backdrop blur. The native backdrop supplies the chat blur without a second full-chat blur pass. The file navigator and minimized file dock use the same dark backdrop material. The composer floats above the message scroll view, uses an 800-point maximum width beside the 740-point message lane, and masks message content to transparent at its bottom edge. Scroll padding tracks composer height so the latest message can still be read above it.
 
 ## Performance profiling
 

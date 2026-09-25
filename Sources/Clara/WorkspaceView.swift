@@ -26,7 +26,6 @@ struct WorkspaceView: View {
                         chatView.padding(.bottom, splitTerminal ? terminalLayout.chatBottomPadding : WorkspaceLayout.bottomClearance)
                             .frame(width: splitTerminal ? terminalLayout.chat.width : layout.chatWidth,
                                    height: splitTerminal ? terminalLayout.chat.height : geometry.size.height)
-                            .blur(radius: store.showTerminal && store.terminalPlacement == .full ? 10 : 0)
                             .allowsHitTesting(!store.showTerminal || splitTerminal)
                             .accessibilityHidden(store.showTerminal && !splitTerminal)
                         FloatingWorkspace()

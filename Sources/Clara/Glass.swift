@@ -45,21 +45,20 @@ struct WindowChrome: NSViewRepresentable {
     }
 }
 extension View {
-    func floatingGlass(enabled: Bool = true, tinted: Bool = false) -> some View {
+    func floatingGlass(enabled: Bool = true, tinted: Bool = false, radius: CGFloat = Palette.cornerRadius) -> some View {
         self.background {
             if enabled {
                 if tinted {
                     InWindowBlur()
                         .overlay(Color.black.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
-                        .glassEffect(.clear.tint(.black.opacity(0.15)), in: RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                         .allowsHitTesting(false)
                 } else {
-                    Color.clear.glassEffect(.regular, in: RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
+                    Color.clear.glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
                 }
             }
         }
-        .overlay(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous).strokeBorder(.white.opacity(enabled ? 0.10 : 0), lineWidth: 0.5).allowsHitTesting(false))
+        .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(.white.opacity(enabled ? 0.10 : 0), lineWidth: 0.5).allowsHitTesting(false))
         .shadow(color: .black.opacity(enabled ? 0.28 : 0), radius: 22, y: 10)
     }
 }
@@ -171,7 +170,7 @@ struct PanelShell: AnimatableModifier {
         content
             .frame(width: rect.width, height: rect.height, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .floatingGlass(enabled: glass, tinted: tinted)
+            .floatingGlass(enabled: glass, tinted: tinted, radius: radius)
             .dockCloseControl(enabled: close != nil, radius: radius, label: closeLabel) { close?() }
             .offset(x: rect.minX, y: rect.minY)
     }
