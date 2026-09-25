@@ -4,8 +4,9 @@ import WebKit
 struct BrowserHost: NSViewRepresentable {
     let session: BrowserSession
     let active: Bool
+    func makeCoordinator() -> PanelVisibility { PanelVisibility() }
     func makeNSView(context: Context) -> WKWebView { session.webView }
-    func updateNSView(_ view: WKWebView, context: Context) { view.isHidden = !active }
+    func updateNSView(_ view: WKWebView, context: Context) { context.coordinator.update(view, active: active) }
 }
 struct BrowserPanel: View {
     @ObservedObject var session: BrowserSession

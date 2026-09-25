@@ -6,6 +6,7 @@ struct FloatingWorkspace: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var filePage = 0
+    @State private var presentedPanels: Set<UUID> = []
     private let dockButtonSize: CGFloat = 38
     private var motion: Animation? { reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.86) }
     var body: some View {
@@ -44,24 +45,21 @@ struct FloatingWorkspace: View {
                         }.padding(.top, dockPadding).frame(width: navWidth, height: dockHeight, alignment: .top)
                     }
                 }
-                .frame(width: navWidth, height: store.showEditor ? panelHeight : dockHeight)
-                .clipShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
-                .floatingGlass()
-                .offset(x: navX, y: inset)
+                .modifier(PanelShell(rect: CGRect(x: navX, y: inset, width: navWidth,
+                    height: store.showEditor ? panelHeight : dockHeight)))
                 .opacity((store.showTerminal || store.showBrowser) ? 0 : 1)
                 .allowsHitTesting(!store.showTerminal && !store.showBrowser).accessibilityHidden(store.showTerminal || store.showBrowser)
                 .zIndex(3)
 
                 ForEach(store.projectDocuments) { document in
                     let index = dockedFiles.firstIndex(where: { $0.id == document.id }) ?? 0
-                    let expanded = !document.minimized
+                    let expanded = !document.minimized && presentedPanels.contains(document.id)
                     let visible = expanded || (index >= filePage && index < filePage + slots)
                     let width: CGFloat = expanded ? editorWidth : itemSize
                     let height: CGFloat = expanded ? panelHeight : itemSize
-                    ZStack {
+                    ZStack(alignment: .topLeading) {
                         FileEditorPanel(documentID: document.id)
                             .frame(width: editorWidth, height: panelHeight)
-                            .scaleEffect(expanded ? 1 : 0.08)
                             .opacity(expanded ? 1 : 0)
                             .allowsHitTesting(expanded).accessibilityHidden(!expanded)
                         if !expanded {
@@ -79,14 +77,18 @@ struct FloatingWorkspace: View {
                                 .contextMenu { Button("Close file") { store.closeFile(document.id) } }
                         }
                     }
-                    .frame(width: width, height: height)
-                    .clipShape(RoundedRectangle(cornerRadius: !expanded && collapsedDock ? 8 : Palette.cornerRadius, style: .continuous))
-                    .floatingGlass(enabled: expanded || !collapsedDock, tinted: expanded)
-                    .dockCloseControl(enabled: !expanded, radius: collapsedDock ? 8 : Palette.cornerRadius, label: "Close " + document.url.lastPathComponent) { store.closeFile(document.id) }
-                    .offset(x: expanded ? editorX : dockX, y: expanded ? inset : inset + dockHeader + CGFloat(index - filePage) * itemStride)
+                    .modifier(PanelShell(rect: CGRect(x: expanded ? editorX : dockX,
+                        y: expanded ? inset : inset + dockHeader + CGFloat(index - filePage) * itemStride,
+                        width: width, height: height), radius: !expanded && collapsedDock ? 8 : Palette.cornerRadius,
+                        tinted: true, closeLabel: "Close " + document.url.lastPathComponent,
+                        close: expanded ? nil : { store.closeFile(document.id) }))
                     .opacity(visible && !store.showTerminal && !store.showBrowser ? 1 : 0).allowsHitTesting(visible && !store.showTerminal && !store.showBrowser).accessibilityHidden(!visible || store.showTerminal || store.showBrowser)
                     .zIndex(expanded ? 2 : 4)
-                    .transition(.asymmetric(insertion: .scale(scale: 0.94).combined(with: .opacity), removal: .scale(scale: 0.94, anchor: .trailing).combined(with: .opacity)))
+                    .onAppear {
+                        DispatchQueue.main.async { withAnimation(motion) { _ = presentedPanels.insert(document.id) } }
+                    }
+                    .onDisappear { presentedPanels.remove(document.id) }
+                    .transition(.opacity)
                 }
                 if dockedFiles.count > slots {
                     HStack(spacing: 0) {
@@ -97,12 +99,11 @@ struct FloatingWorkspace: View {
                 }
 
                 ForEach(Array(store.projectSessions.enumerated()), id: \.element.id) { index, session in
-                    let expanded = store.showTerminal && store.selectedTerminal == session.id
+                    let expanded = store.showTerminal && store.selectedTerminal == session.id && presentedPanels.contains(session.id)
                     let tabWidth = min(146.0, max(90.0, (size.width - 132) / CGFloat(max(1, store.projectSessions.count)) - 8))
-                    ZStack {
+                    ZStack(alignment: .topLeading) {
                         TerminalPanel(session: session)
                             .frame(width: terminalBounds.width, height: terminalBounds.height)
-                            .scaleEffect(expanded ? 1 : 0.08, anchor: .bottomLeading)
                             .opacity(expanded ? 1 : 0)
                             .allowsHitTesting(expanded).accessibilityHidden(!expanded)
                         if !expanded {
@@ -117,31 +118,31 @@ struct FloatingWorkspace: View {
                                 .help("Restore " + session.title)
                         }
                     }
-                    .frame(width: expanded ? terminalBounds.width : tabWidth, height: expanded ? terminalBounds.height : dockButtonSize)
-                    .contentShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
-                    .clipShape(RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
-                    .floatingGlass(tinted: expanded)
-                    .dockCloseControl(enabled: !expanded, label: "Close " + session.title) { store.closeTerminal(session) }
+                    .modifier(PanelShell(rect: expanded ? terminalBounds : CGRect(
+                        x: inset + 46 + CGFloat(index) * (tabWidth + 8), y: size.height - 48,
+                        width: tabWidth, height: dockButtonSize), tinted: true,
+                        closeLabel: "Close " + session.title, close: expanded ? nil : { store.closeTerminal(session) }))
                     .contextMenu { Button("Rename terminal…") { session.rename() } }
-                    .onAppear { session.isPresented = expanded }
-                    .onDisappear { session.isPresented = false }
+                    .onAppear {
+                        session.isPresented = expanded
+                        DispatchQueue.main.async { withAnimation(motion) { _ = presentedPanels.insert(session.id) } }
+                    }
+                    .onDisappear { session.isPresented = false; presentedPanels.remove(session.id) }
                     .onChange(of: expanded) { _, value in session.isPresented = value }
-                    .offset(x: expanded ? terminalBounds.minX : inset + 46 + CGFloat(index) * (tabWidth + 8), y: expanded ? terminalBounds.minY : size.height - 48)
                     .zIndex(expanded ? 10 : 6)
-                    .transition(.scale(scale: 0.9, anchor: .bottomLeading).combined(with: .opacity))
+                    .transition(.opacity)
                 }
                 if let browser = store.browser {
-                    ZStack {
+                    ZStack(alignment: .topLeading) {
                         BrowserPanel(session: browser).frame(width: size.width - 28, height: panelHeight)
-                            .scaleEffect(store.showBrowser ? 1 : 0.08, anchor: .bottomTrailing)
                             .opacity(store.showBrowser ? 1 : 0).allowsHitTesting(store.showBrowser).accessibilityHidden(!store.showBrowser)
                         if !store.showBrowser {
                             DockIconButton(icon: "globe", help: "Open browser", width: dockButtonSize, height: dockButtonSize) { store.openBrowser() }
                         }
-                    }.frame(width: store.showBrowser ? size.width - 28 : dockButtonSize, height: store.showBrowser ? panelHeight : dockButtonSize)
-                        .contentShape(RoundedRectangle(cornerRadius: Palette.cornerRadius))
-                        .clipShape(RoundedRectangle(cornerRadius: Palette.cornerRadius)).floatingGlass()
-                        .offset(x: store.showBrowser ? inset : size.width - inset - dockButtonSize, y: store.showBrowser ? inset : size.height - 48)
+                    }.modifier(PanelShell(rect: store.showBrowser
+                        ? CGRect(x: inset, y: inset, width: size.width - 28, height: panelHeight)
+                        : CGRect(x: size.width - inset - dockButtonSize, y: size.height - 48,
+                                 width: dockButtonSize, height: dockButtonSize)))
                         .zIndex(store.showBrowser ? 12 : 7)
                 }
                 DockIconButton(icon: "plus", help: "New terminal", width: dockButtonSize, height: dockButtonSize) { store.addTerminal() }

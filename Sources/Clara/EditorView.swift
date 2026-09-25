@@ -5,11 +5,11 @@ import SwiftTerm
 struct TerminalHost: NSViewRepresentable {
     let session: TerminalSession
     var isActive: Bool
-    final class Coordinator { var wasActive = false }
+    final class Coordinator { var wasActive = false; let visibility = PanelVisibility() }
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> LocalProcessTerminalView { session.view }
     func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
-        nsView.isHidden = !isActive
+        context.coordinator.visibility.update(nsView, active: isActive)
         if context.coordinator.wasActive != isActive { nsView.window?.invalidateCursorRects(for: nsView) }
         if isActive && !context.coordinator.wasActive {
             DispatchQueue.main.async { nsView.window?.makeFirstResponder(nsView) }
@@ -49,15 +49,13 @@ struct CodeEditor: NSViewRepresentable {
     }
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
-        if scroll.isHidden == isActive {
-            scroll.isHidden = !isActive
-            if let document = scroll.documentView { scroll.window?.invalidateCursorRects(for: document) }
-        }
+        context.coordinator.visibility.update(scroll, active: isActive)
         guard let view = scroll.documentView as? NSTextView else { return }
         if view.string != text { view.string = text; view.undoManager?.removeAllActions(); context.coordinator.highlight(view) }
         view.isEditable = editable
     }
     final class Coordinator: NSObject, NSTextViewDelegate {
+        let visibility = PanelVisibility()
         var parent: CodeEditor
         init(_ parent: CodeEditor) { self.parent = parent }
         func textDidChange(_ notification: Notification) {
@@ -177,4 +175,31 @@ struct EditReview: View {
             }
         }.padding(24).frame(width: 1000, height: 650).background(Palette.background).tint(Palette.accent).focusEffectDisabled()
     }
+}
+
+/// Keep native content alive for the closing animation, then remove its cursor
+/// regions. Reopening cancels a pending hide instead of blinking the native view.
+final class PanelVisibility {
+    private var active: Bool?
+    private var pending: DispatchWorkItem?
+    func update(_ view: NSView, active: Bool) {
+        guard self.active != active else { return }
+        let initial = self.active == nil
+        self.active = active
+        pending?.cancel()
+        if active {
+            view.isHidden = false
+            view.window?.invalidateCursorRects(for: view)
+        } else {
+            let hide = DispatchWorkItem { [weak view] in
+                guard let view else { return }
+                view.isHidden = true
+                view.window?.invalidateCursorRects(for: view)
+            }
+            pending = hide
+            if initial || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { hide.perform() }
+            else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: hide) }
+        }
+    }
+    deinit { pending?.cancel() }
 }

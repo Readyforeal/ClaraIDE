@@ -150,3 +150,29 @@ extension View {
         modifier(DockCloseControl(enabled: enabled, radius: radius, label: label, close: close))
     }
 }
+
+/// Interpolate the shell itself, including its native backdrop, instead of scaling
+/// a native editor inside a glass surface that has already jumped to its final size.
+struct PanelShell: AnimatableModifier {
+    var rect: CGRect
+    var radius: CGFloat = Palette.cornerRadius
+    var glass: Bool = true
+    var tinted: Bool = false
+    var closeLabel = "Close panel"
+    var close: (() -> Void)? = nil
+    var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, AnimatablePair<CGFloat, CGFloat>> {
+        get { .init(.init(rect.origin.x, rect.origin.y), .init(rect.width, rect.height)) }
+        set {
+            rect = CGRect(x: newValue.first.first, y: newValue.first.second,
+                          width: max(1, newValue.second.first), height: max(1, newValue.second.second))
+        }
+    }
+    func body(content: Content) -> some View {
+        content
+            .frame(width: rect.width, height: rect.height, alignment: .topLeading)
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .floatingGlass(enabled: glass, tinted: tinted)
+            .dockCloseControl(enabled: close != nil, radius: radius, label: closeLabel) { close?() }
+            .offset(x: rect.minX, y: rect.minY)
+    }
+}

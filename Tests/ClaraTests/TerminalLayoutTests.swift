@@ -3,6 +3,18 @@ import XCTest
 @testable import Clara
 
 final class TerminalLayoutTests: XCTestCase {
+    @MainActor func testReopeningCancelsPendingNativeViewHide() async throws {
+        let view = NSView()
+        let visibility = PanelVisibility()
+        visibility.update(view, active: true)
+        visibility.update(view, active: false)
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            XCTAssertFalse(view.isHidden, "Native content should remain during the closing animation")
+        }
+        visibility.update(view, active: true)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertFalse(view.isHidden, "A canceled close must not hide a reopened panel")
+    }
     func testDirectionalSnappingAndSmallDrags() {
         XCTAssertEqual(TerminalPlacement.destination(for: CGSize(width: 4, height: 30), current: .full), .full)
         XCTAssertEqual(TerminalPlacement.destination(for: CGSize(width: 15, height: 80), current: .full), .bottom)
