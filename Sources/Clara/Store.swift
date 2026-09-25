@@ -97,10 +97,21 @@ struct EditorDocument: Identifiable {
     func openBrowser() {
         guard let project else { return }
         let session = browserForProject(project.id)
+        let previousURL = session.servoURL
         session.servoURL = ServoIntegration.projectURL(for: project.path)
         showingIssues = false; showTerminal = false; showBrowser = true
-        if session.address.isEmpty, let url = session.servoURL {
-            do { try session.open(url.absoluteString) } catch { session.error = error.localizedDescription }
+        if let url = session.servoURL {
+            let current = URL(string: session.address)
+            let wasOnServo = previousURL != nil && current?.host == previousURL?.host && current?.port == previousURL?.port && current?.scheme == previousURL?.scheme
+            if session.address.isEmpty || (wasOnServo && previousURL != url) {
+                var destination = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+                if wasOnServo, let old = current.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) }) {
+                    destination.percentEncodedPath = old.percentEncodedPath
+                    destination.percentEncodedQuery = old.percentEncodedQuery
+                    destination.percentEncodedFragment = old.percentEncodedFragment
+                }
+                do { try session.open(destination.url!.absoluteString) } catch { session.error = error.localizedDescription }
+            }
         }
     }
     func openServoProject() {

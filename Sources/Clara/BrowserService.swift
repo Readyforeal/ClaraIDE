@@ -22,7 +22,7 @@ import WebKit
     static func validatedURL(_ value: String) throws -> URL {
         let input = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let host = URL(string: "http://" + input)?.host?.lowercased() ?? ""
-        let local = host == "localhost" || host.hasSuffix(".localhost") || host == "127.0.0.1" || host == "[::1]" || host == "::1"
+        let local = host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".test") || host == "127.0.0.1" || host == "[::1]" || host == "::1"
         let normalized = input.contains("://") ? input : (local ? "http://" : "https://") + input
         guard let url = URL(string: normalized), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
               url.user == nil, url.password == nil else { throw AppError.message("Enter an HTTP or HTTPS address without embedded credentials.") }

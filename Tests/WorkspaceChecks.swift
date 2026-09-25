@@ -203,6 +203,24 @@ import Foundation
         try check(ServoIntegration.projectURL(for: repository.path, settingsURL: servoSettings) == nil, "stale Servo port entries are ignored")
         try Data("invalid".utf8).write(to: servoSettings)
         try check(ServoIntegration.projectURL(for: repository.path, settingsURL: servoSettings) == nil, "invalid Servo settings fail gracefully")
+        try check(BrowserSession.validatedURL("shop.test").scheme == "http", ".test previews default to HTTP")
+        let manifestURL = servoSettings.deletingLastPathComponent().appendingPathComponent("sites.json")
+        func manifest(running: Bool = true, age: Double = 0, address: String = "http://shop.test") throws {
+            try JSONSerialization.data(withJSONObject: ["version": 1, "updatedAt": Date().timeIntervalSince1970 - age,
+                "sites": [["path": linkedSite.path, "resolvedPath": repository.path, "url": address, "running": running]]]).write(to: manifestURL)
+        }
+        try manifest()
+        try check(ServoIntegration.projectURL(for: repository.path, settingsURL: servoSettings)?.absoluteString == "http://shop.test", "live Servo URL overrides legacy settings")
+        try check(ServoIntegration.projectURL(for: repository.appendingPathComponent("public").path, settingsURL: servoSettings)?.host == "shop.test", "nested project folder matches site root")
+        try check(ServoIntegration.projectURL(for: repository.path + "-other", settingsURL: servoSettings) == nil, "sibling path is not matched by prefix")
+        try manifest(running: false)
+        try check(ServoIntegration.projectURL(for: repository.path, settingsURL: servoSettings) == nil, "stopped sites do not advertise a URL")
+        try manifest(age: 60)
+        try check(ServoIntegration.projectURL(for: repository.path, settingsURL: servoSettings) == nil, "expired manifests do not fall back to stale ports")
+        try manifest(address: "https://192.168.1.10:28001")
+        try check(ServoIntegration.projectURL(for: repository.path, settingsURL: servoSettings)?.scheme == "https", "actual HTTPS address is preserved")
+        try manifest(address: "file:///etc/hosts")
+        try check(ServoIntegration.projectURL(for: repository.path, settingsURL: servoSettings) == nil, "non-web manifest URLs are rejected")
         try check(ReleaseVersion("v0.10.0")! > ReleaseVersion("0.9.9")!, "update versions compare numerically")
         try check(ReleaseVersion("0.3.0-beta") == nil && ReleaseVersion("../bad") == nil, "unsupported release versions are rejected")
         let update = GitHubRelease(tag_name: "v0.3.0", html_url: URL(string: "https://github.com/Readyforeal/ClaraIDE/releases")!, draft: false, prerelease: false,

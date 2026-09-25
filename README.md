@@ -96,3 +96,5 @@ Terminal and editor slabs use translucent, dark-tinted glass with in-window back
 ## Performance profiling
 
 Run `./scripts/profile.sh` after building to exercise an isolated synthetic workspace without touching your chats or making API calls. See [the profiling report](docs/PERFORMANCE.md) for measurements, retained optimizations, and remaining bottlenecks.
+
+Servo integration reads the live `Servo/sites.json` manifest, including `.test` names and HTTPS addresses, instead of guessing a URL from a port. Running-site records expire after 20 seconds without a heartbeat. Opening the browser refreshes discovery; `.test` names default to HTTP.
