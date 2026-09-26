@@ -10,6 +10,7 @@ struct Conversation: Codable, Identifiable {
     var title = "New conversation"
     var model = ""
     var messages: [Message] = []
+    var toolHistory: [APIMessage]?
 }
 struct Project: Codable, Identifiable {
     var id = UUID()
@@ -37,6 +38,13 @@ struct Workspace: Codable {
 struct RouterModel: Codable, Identifiable {
     let id: String
     let name: String
+    var supported_parameters: [String]?
+    var context_length: Int?
+    var top_provider: ProviderLimits?
+    struct ProviderLimits: Codable { var max_completion_tokens: Int? }
+    var outputBudget: Int {
+        max(1, min(16_384, top_provider?.max_completion_tokens ?? 16_384, (context_length ?? 65_536) / 4))
+    }
 }
 struct FileEntry: Identifiable {
     var id: String { url.path }

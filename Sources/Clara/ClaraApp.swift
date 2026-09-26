@@ -37,6 +37,7 @@ import AppKit
                     .keyboardShortcut("p", modifiers: [.command, .option])
                 Toggle("Enable Clara Peek", isOn: Binding(get: { delegate.peek?.enabled ?? true }, set: { delegate.peek?.enabled = $0 }))
                 Divider()
+                Button("Reset Command Approvals") { store.resetCommandApprovals() }
                 Button("Open Browser") { store.openBrowser() }.keyboardShortcut("b", modifiers: [.command, .shift])
                 Button("Undo Delete Conversation") { store.undoDeleteChat() }.disabled(store.deletedChat == nil)
                 Button("Toggle Project Sidebar") { store.toggleSidebar() }.keyboardShortcut("s", modifiers: [.command, .control])
@@ -83,6 +84,7 @@ import AppKit
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard store?.confirmDiscard() != false else { return .terminateCancel }
+        store?.cancel(); AgentCommand.stopAll()
         peek?.shutdown(); store?.persist(); store?.sessions.forEach { $0.stop() }; return .terminateNow
     }
 }

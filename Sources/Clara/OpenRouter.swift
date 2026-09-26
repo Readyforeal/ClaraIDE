@@ -12,8 +12,89 @@ struct APIMessage: Codable {
     var content: String?
     var tool_calls: [ToolCall]?
     var tool_call_id: String?
+    var reasoning_details: [JSONValue]?
 }
-struct RouterResult { var text: String; var calls: [ToolCall] }
+struct RouterResult {
+    var text: String
+    var calls: [ToolCall]
+    var finishReason: String?
+    var reasoningDetails: [JSONValue]?
+}
+
+enum JSONValue: Codable {
+    case object([String: JSONValue]), array([JSONValue]), string(String), number(Double), bool(Bool), null
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self = .null }
+        else if let v = try? c.decode(Bool.self) { self = .bool(v) }
+        else if let v = try? c.decode(String.self) { self = .string(v) }
+        else if let v = try? c.decode(Double.self) { self = .number(v) }
+        else if let v = try? c.decode([String: JSONValue].self) { self = .object(v) }
+        else { self = .array(try c.decode([JSONValue].self)) }
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .object(let v): try c.encode(v)
+        case .array(let v): try c.encode(v)
+        case .string(let v): try c.encode(v)
+        case .number(let v): try c.encode(v)
+        case .bool(let v): try c.encode(v)
+        case .null: try c.encodeNil()
+        }
+    }
+}
+
+struct RouterStreamAccumulator {
+    var text = ""
+    var calls: [Int: ToolCall] = [:]
+    var reasoning: [Int: [String: Any]] = [:]
+    var finishReason: String?
+    mutating func consume(_ event: [String: Any]) throws {
+        if let error = event["error"] as? [String: Any] { throw AppError.message(error["message"] as? String ?? "OpenRouter stream failed.") }
+        guard let choice = (event["choices"] as? [[String: Any]])?.first else { return }
+        if let reason = choice["finish_reason"] as? String { finishReason = reason }
+        let delta = choice["delta"] as? [String: Any] ?? [:]
+        if let reason = delta["finish_reason"] as? String { finishReason = reason }
+        text += delta["content"] as? String ?? ""
+        for detail in delta["reasoning_details"] as? [[String: Any]] ?? [] {
+            let index = detail["index"] as? Int ?? 0
+            var merged = reasoning[index] ?? [:]
+            for (key, value) in detail {
+                if ["text", "data", "signature"].contains(key), let fragment = value as? String {
+                    merged[key] = (merged[key] as? String ?? "") + fragment
+                } else { merged[key] = value }
+            }
+            reasoning[index] = merged
+        }
+        for part in delta["tool_calls"] as? [[String: Any]] ?? [] {
+            let index = part["index"] as? Int ?? 0
+            var call = calls[index] ?? ToolCall(id: "", function: .init(name: "", arguments: ""))
+            if let id = part["id"] as? String { call.id = id }
+            if let function = part["function"] as? [String: Any] {
+                if let name = function["name"] as? String { call.function.name += name }
+                if let arguments = function["arguments"] as? String { call.function.arguments += arguments }
+            }
+            calls[index] = call
+        }
+    }
+    func result() throws -> RouterResult {
+        guard let finishReason else { throw AppError.message("The provider stream ended before completing its response. Partial tool calls were not executed. Please retry.") }
+        if finishReason == "error" || finishReason == "content_filter" { throw AppError.message("The provider stopped this response: \(finishReason).") }
+        let sorted = calls.keys.sorted().compactMap { calls[$0] }
+        if finishReason != "length" {
+            for call in sorted {
+                guard !call.id.isEmpty, !call.function.name.isEmpty,
+                      (try? JSONSerialization.jsonObject(with: Data(call.function.arguments.utf8))) is [String: Any] else {
+                    throw AppError.message("The provider returned an incomplete tool call. Nothing from this response was executed; please retry.")
+                }
+            }
+        }
+        let details = reasoning.keys.sorted().compactMap { reasoning[$0] }
+        return RouterResult(text: text, calls: sorted, finishReason: finishReason,
+            reasoningDetails: details.isEmpty ? nil : try JSONDecoder().decode([JSONValue].self, from: JSONSerialization.data(withJSONObject: details)))
+    }
+}
 
 enum Keychain {
     static let service = "com.local.obsidian.openrouter"
@@ -50,10 +131,15 @@ enum OpenRouter {
             throw AppError.message("OpenRouter returned HTTP \(status): \(String(data: data, encoding: .utf8)?.prefix(500) ?? "Unknown response")")
         }
     }
+    static func tool(_ name: String, _ description: String, _ properties: [String: Any], _ required: [String]) -> [String: Any] {
+        ["type": "function", "function": ["name": name, "description": description, "parameters": ["type": "object", "properties": properties, "required": required]]]
+    }
     static let toolDefinitions: [[String: Any]] = [
-        ["type": "function", "function": ["name": "list_files", "description": "List a project directory. Hidden entries are omitted.", "parameters": ["type": "object", "properties": ["path": ["type": "string"]], "required": ["path"]]]],
-        ["type": "function", "function": ["name": "read_file", "description": "Read a UTF-8 project file, up to 1 MB.", "parameters": ["type": "object", "properties": ["path": ["type": "string"]], "required": ["path"]]]],
-        ["type": "function", "function": ["name": "write_file", "description": "Propose the complete contents of a project file. The user must review and apply the change.", "parameters": ["type": "object", "properties": ["path": ["type": "string"], "content": ["type": "string"]], "required": ["path", "content"]]]]
+        tool("list_files", "List a directory including hidden files. Paginated; follow the returned offset.", ["path": ["type": "string"], "offset": ["type": "integer"]], ["path"]),
+        tool("read_file", "Read numbered lines of a UTF-8 project file. Follow next start_line to read more; do not ask the user to paste files you can access.", ["path": ["type": "string"], "start_line": ["type": "integer"], "line_count": ["type": "integer"]], ["path"]),
+        tool("search_files", "Search filenames and file contents for literal text, case insensitive. Skips generated/dependency folders. Use a narrower path or run_command for other searches.", ["path": ["type": "string"], "query": ["type": "string"], "offset": ["type": "integer"]], ["path", "query"]),
+        tool("run_command", "Run a shell command in the project after user approval. Returns output and exit code. Non-interactive; timeout defaults to 120 seconds, maximum 300. Use the terminal UI for persistent servers. Do not retry denied commands.", ["command": ["type": "string"], "path": ["type": "string"], "timeout_seconds": ["type": "number"]], ["command"]),
+        tool("write_file", "Propose complete file contents for user review. Does not apply the change.", ["path": ["type": "string"], "content": ["type": "string"]], ["path", "content"])
     ]
     static let browserToolDefinitions: [[String: Any]] = [
         ["type": "function", "function": ["name": "browser_open", "description": "Open an HTTP(S) URL in the visible project browser and return page text and indexed elements.", "parameters": ["type": "object", "properties": ["url": ["type": "string"]], "required": ["url"]]]],
@@ -61,7 +147,7 @@ enum OpenRouter {
         ["type": "function", "function": ["name": "browser_click", "description": "Ask the user to approve clicking an element ID from the latest browser_read. Do not retry denied actions.", "parameters": ["type": "object", "properties": ["id": ["type": "integer"]], "required": ["id"]]]],
         ["type": "function", "function": ["name": "browser_type", "description": "Ask the user to approve entering text into an input element ID. Password and file inputs are not supported.", "parameters": ["type": "object", "properties": ["id": ["type": "integer"], "text": ["type": "string"]], "required": ["id", "text"]]]]
     ]
-    static func stream(key: String, model: String, messages: [APIMessage], tools: Bool, browserTools: Bool = false,
+    static func stream(key: String, model: String, messages: [APIMessage], tools: Bool, browserTools: Bool = false, maxOutputTokens: Int? = nil,
                        onText: @escaping @MainActor (String) -> Void) async throws -> RouterResult {
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
         request.httpMethod = "POST"; request.timeoutInterval = 180
@@ -70,8 +156,13 @@ enum OpenRouter {
         request.setValue("Clara", forHTTPHeaderField: "X-Title")
         var body: [String: Any] = ["model": model, "stream": true,
             "messages": try JSONSerialization.jsonObject(with: JSONEncoder().encode(messages))]
+        if let maxOutputTokens { body["max_tokens"] = maxOutputTokens }
         let availableTools = (tools ? toolDefinitions : []) + (browserTools ? browserToolDefinitions : [])
-        if !availableTools.isEmpty { body["tools"] = availableTools }
+        if !availableTools.isEmpty {
+            body["tools"] = availableTools
+            body["tool_choice"] = "auto"
+            body["provider"] = ["require_parameters": true]
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -80,28 +171,17 @@ enum OpenRouter {
             try validate(response, data: data)
             throw AppError.message("Invalid server response.")
         }
-        var output = ""
-        var calls: [Int: ToolCall] = [:]
+        var accumulator = RouterStreamAccumulator()
         for try await line in bytes.lines {
             try Task.checkCancellation()
-            guard line.hasPrefix("data: ") else { continue }
-            let payload = String(line.dropFirst(6))
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if payload == "[DONE]" { break }
             guard let data = payload.data(using: .utf8), let event = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-            if let error = event["error"] as? [String: Any] { throw AppError.message(error["message"] as? String ?? "OpenRouter stream failed.") }
-            guard let choices = event["choices"] as? [[String: Any]], let delta = choices.first?["delta"] as? [String: Any] else { continue }
-            if let text = delta["content"] as? String { output += text; await onText(output) }
-            for part in delta["tool_calls"] as? [[String: Any]] ?? [] {
-                let index = part["index"] as? Int ?? 0
-                var call = calls[index] ?? ToolCall(id: "", function: .init(name: "", arguments: ""))
-                if let id = part["id"] as? String { call.id = id }
-                if let function = part["function"] as? [String: Any] {
-                    if let name = function["name"] as? String { call.function.name += name }
-                    if let arguments = function["arguments"] as? String { call.function.arguments += arguments }
-                }
-                calls[index] = call
-            }
+            let previous = accumulator.text
+            try accumulator.consume(event)
+            if accumulator.text != previous { await onText(accumulator.text) }
         }
-        return RouterResult(text: output, calls: calls.keys.sorted().compactMap { calls[$0] })
+        return try accumulator.result()
     }
 }

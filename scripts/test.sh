@@ -14,6 +14,6 @@ else
 fi
 swiftc -parse-as-library -swift-version 5 -target arm64-apple-macosx27.0 \
   -I "$MODULES" \
-  Sources/Clara/Updates.swift Sources/Clara/Models.swift Sources/Clara/GitRepository.swift Sources/Clara/ServoIntegration.swift Sources/Clara/WorkspaceLayout.swift Sources/Clara/OpenRouter.swift Sources/Clara/Store.swift Sources/Clara/BrowserService.swift \
+  Sources/Clara/Updates.swift Sources/Clara/Models.swift Sources/Clara/GitRepository.swift Sources/Clara/ServoIntegration.swift Sources/Clara/WorkspaceLayout.swift Sources/Clara/AgentTools.swift Sources/Clara/OpenRouter.swift Sources/Clara/Store.swift Sources/Clara/BrowserService.swift \
   Tests/WorkspaceChecks.swift "${TERMINAL_OBJECTS[@]}" -o "$BIN/WorkspaceChecks"
 "$BIN/WorkspaceChecks"

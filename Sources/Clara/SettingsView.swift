@@ -37,7 +37,7 @@ struct SettingsView: View {
                         if store.models.isEmpty { Text("Enter a model ID, or refresh the live catalog.").font(.system(size: 11)).foregroundStyle(Palette.muted).padding(30) }
                     }
                 }.frame(height: 220).background(Color.black.opacity(0.2), in: RoundedRectangle(cornerRadius: Palette.cornerRadius, style: .continuous))
-                Text("Disable Project tools in chat for models without tool calling support.").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                Text("Project work requires a tool-capable model. Command approval can be granted once or for the project session.").font(.system(size: 10)).foregroundStyle(Palette.muted)
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("GITHUB UPDATES").font(.system(size: 10, weight: .medium)).tracking(1.3).foregroundStyle(Palette.muted)

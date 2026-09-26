@@ -18,7 +18,7 @@ The SwiftTerm source is vendored, so building does not require downloading packa
 1. Open a project folder with the **+** beside Projects or ⇧⌘O.
 2. Open Settings (⌘,) and enter your OpenRouter API key. Refresh the model catalog or enter any OpenRouter model ID. Save.
 3. Start a conversation. ⌘Return sends; the stop button cancels streaming.
-4. Enable **Project tools** for models supporting function calling. The model can list/read files and propose whole-file changes. Review the current/proposed contents and apply or reject each proposal. Disable tools for models without function calling.
+4. Enable **Project tools** for models supporting function calling. The model can list/search files (including hidden files), read numbered pages, run shell commands, and propose whole-file changes. Review the current/proposed contents and apply or reject each proposal. Disable tools for models without function calling.
 5. Use ⇧⌘T for a native zsh terminal. Run `ssh user@host`, vim, and ordinary terminal programs here. Minimize with the minus button; sessions remain alive in the bottom tabs until closed or the app quits.
 6. Use ⇧⌘E for the independent floating file navigator. Opening a file reveals a separate full-height editor alongside it. Minus minimizes that editor into a rounded file tile; opening another file preserves the earlier buffer. Click a tile to restore it, or close a file with × (unsaved changes prompt before closing). Save with ⌘S. **Add to chat** attaches the current text to the next message.
 
@@ -32,14 +32,14 @@ The SwiftTerm source is vendored, so building does not require downloading packa
 - Multiple unsaved file buffers remain available across minimizing, restoring, and project switching.
 - OpenRouter streaming, cancellation, errors, live searchable model catalog, custom model IDs.
 - API key stored in macOS Keychain; no intermediate backend.
-- Project-scoped file tools, symlink/path traversal checks, up to 12 tool rounds per turn.
+- Project-scoped file tools, symlink/path traversal checks, up to 80 tool rounds per turn, with tool results preserved for continuation.
 - Review before model file writes; conflict checks against external edits.
 - Real native pseudo-terminal sessions, including SSH support, ANSI colors and terminal programs, powered by SwiftTerm.
 - AppKit text editor with undo, simple syntax coloring, plain-text validation, and unsaved-change prompts.
 
 ## Current boundaries
 
-This is a first usable implementation, not a complete Codex replacement. The assistant reads files and proposes edits but does not execute commands or run tests autonomously. Terminals are user controlled. There is no LSP, autocomplete, Git diff integration, cross-file search, multi-file editor tabs, image input, or remote project filesystem. File browsing omits hidden files. The text editor supports UTF-8 files up to 1 MB and uses lightweight highlighting rather than a language parser. Panels adapt to the chat viewport; the file navigator has a fixed width. Editor buffers and undo history last for the current app session. One generation can run at a time. Terminal sessions and unapplied proposals last for the current app session; saved chats/projects survive restarts.
+This is a first usable implementation, not a complete Codex replacement. The assistant can inspect files and run commands after in-app approval. “Allow for Project Session” permits subsequent commands in that project until reset or quit; Workspace → Reset Command Approvals revokes it. Commands run with your account permissions, not in a sandbox. Outputs and exit codes appear in chat. Stop and timeout terminate the command process group; detached/daemonized services are not supported. Use the terminal UI for persistent servers. There is no LSP, autocomplete, Git diff integration, multi-file editor tabs, image input, or remote project filesystem. File browsing and agent search include hidden files. Agent reads support UTF-8 files up to 20 MB with explicit pagination; search skips generated/dependency folders and reports scan limits. The text editor supports UTF-8 files up to 1 MB and uses lightweight highlighting rather than a language parser. Panels adapt to the chat viewport; the file navigator has a fixed width. Editor buffers and undo history last for the current app session. One generation can run at a time. Terminal sessions and unapplied proposals last for the current app session; saved chats/projects survive restarts.
 
 Existing projects and chats migrate from the old Obsidian workspace on first launch. The legacy Keychain service identifier is retained to keep your saved API key.
 
@@ -106,3 +106,7 @@ Clara includes its own notch companion—no separate app or installation. Hover 
 The terminal button opens a separate temporary shell in the selected project folder. Each project's Peek shell survives collapse and project switches. Its close button ends that shell; quitting Clara ends all Peek shells. They are not saved between launches or added to the main terminal dock.
 
 Use **Workspace → Enable Clara Peek** to turn it off/on, or **Show Clara Peek** (`⌥⌘P`, while Clara is active). Notched displays use the system-reported housing geometry; other displays get a centered top-edge tab. Display changes reposition the panel, and Reduce Motion is respected. Hover doesn't activate Clara or steal keyboard focus. Only the latest 30 messages are rendered in Peek; the full history remains in the main workspace. Peek stays available while Clara is running.
+
+### Agent response handling
+
+Clara requests tool-capable OpenRouter routes, preserves reasoning details and tool results across tool calls, and detects provider cutoffs before executing incomplete tool calls. It retries output-length cutoffs at most twice with smaller requests. Known catalog limits bound an explicit output allowance of up to 16,384 tokens. Older large tool outputs are shortened with an explicit re-read notice. Tool transcripts are stored locally with chats; subsequent turns send retained context to the selected provider. Changing models sends that retained context to the newly selected provider. No live model calls are made by the automated tests.
