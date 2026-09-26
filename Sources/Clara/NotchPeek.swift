@@ -52,15 +52,35 @@ func peekOutline(in rect: CGRect, shoulder: CGFloat = 16) -> CGPath {
 final class PeekSurface: NSView {
     var clicked: (() -> Void)?
     private let outline = CAShapeLayer()
+
     override func layout() {
         super.layout()
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        outline.frame = bounds
-        outline.path = peekOutline(in: bounds, shoulder: bounds.height > 60 ? 16 : 0)
+
+        // Put the mask edge outside the visible surface so Core Animation's
+        // antialiasing cannot create a hairline where it meets the bezel.
+        let topBleed: CGFloat = 1
+        let maskBounds = CGRect(
+            x: 0,
+            y: 0,
+            width: bounds.width,
+            height: bounds.height + topBleed
+        )
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        outline.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        outline.frame = maskBounds
+        outline.path = peekOutline(
+            in: maskBounds,
+            shoulder: bounds.height > 60 ? 16 : 0
+        )
         layer?.mask = outline
         CATransaction.commit()
     }
-    override func mouseDown(with event: NSEvent) { clicked?() }
+
+    override func mouseDown(with event: NSEvent) {
+        clicked?()
+    }
 }
 
 @MainActor final class NotchPeekController: NSObject, ObservableObject {
