@@ -1,12 +1,13 @@
 #!/bin/zsh
 set -euo pipefail
 cd "${0:A:h:h}"
+source "$PWD/scripts/toolchain.sh"
 export CLANG_MODULE_CACHE_PATH="$PWD/.build/clang-cache"
 swift build -c release --cache-path "$PWD/.build/cache" --disable-sandbox
 APP="$PWD/build/Clara.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Prefer Apple's layered icon compiler without changing the machine's selected toolchain.
-ICON_DEVELOPER_DIR="${CLARA_DEVELOPER_DIR:-$(xcode-select -p)}"
+ICON_DEVELOPER_DIR="$DEVELOPER_DIR"
 if [[ ! -x "$ICON_DEVELOPER_DIR/usr/bin/actool" ]]; then
   for candidate in /Applications/Xcode*.app/Contents/Developer(N); do
     if [[ -x "$candidate/usr/bin/actool" ]]; then

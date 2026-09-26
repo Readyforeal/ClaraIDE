@@ -4,7 +4,7 @@ A chat-first native macOS coding workspace, built with SwiftUI, AppKit, and Swif
 
 ## Run
 
-Requires macOS 27 or later and Swift 6.0+ command line tools (or Xcode).
+Requires macOS 27 or later and full Xcode with the macOS 27 SDK or newer. Standalone Command Line Tools are insufficient. The build/test scripts automatically find compatible Xcode without changing global `xcode-select`. For a custom installation, set `CLARA_DEVELOPER_DIR=/path/to/Xcode.app/Contents/Developer`.
 
 ```sh
 ./scripts/build-app.sh

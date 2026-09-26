@@ -1,6 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 cd "${0:A:h:h}"
+source "$PWD/scripts/toolchain.sh"
 export CLANG_MODULE_CACHE_PATH="$PWD/.build/clang-cache"
 swift build --cache-path "$PWD/.build/cache" --disable-sandbox
 BIN=$(swift build --show-bin-path --cache-path "$PWD/.build/cache" --disable-sandbox)
